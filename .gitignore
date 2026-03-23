@@ -1,0 +1,39 @@
+# quantWF_2.0 Git Ignore Configuration
+
+# Temporary analysis files
+temp/
+
+# Alternative script versions (not for distribution)
+script/
+
+# R temporary files
+*.Rhistory
+*.RData
+*.Rproj.user/
+.Rproj.user/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor backup files
+*~
+*.swp
+*.swo
+*.bak
+
+# Log files
+*.log
+
+# Large data files (keep testdata, ignore user data)
+*.csv
+*.txt
+!testdata/*.txt
+!testdata/*.csv
+
+# Output plots (PDF and PNG from analysis runs)
+plot/
+
+# Docs assets - keep only PNG for web display
+docs/assets/*.pdf
