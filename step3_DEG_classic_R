@@ -549,16 +549,17 @@ safe_plot_data <- function(data, cols = c("log2FC", "p.adj")) {
 }
 
 # Function to save plots as both PDF and PNG
+# PDF saved to plot_dir, PNG saved to assets_dir (for report embedding)
 save_plot_both <- function(plot, filename_base, width = 8, height = 6, dpi = 300) {
   pdf_file <- file.path(plot_dir, paste0(filename_base, ".pdf"))
-  png_file <- file.path(plot_dir, paste0(filename_base, ".png"))
+  png_file <- file.path(assets_dir, paste0(filename_base, ".png"))
   
-  # Save as PDF
+  # Save as PDF (high resolution for publication)
   pdf(pdf_file, width = width, height = height)
   print(plot)
   dev.off()
   
-  # Save as PNG
+  # Save as PNG (for report embedding)
   png(png_file, width = width * dpi, height = height * dpi, res = dpi)
   print(plot)
   dev.off()
@@ -946,9 +947,9 @@ if(report_initialized) {
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
         report_lines <- c(report_lines, sprintf("**%s (t-test)**", comp_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](assets/%s_volcano_%s.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](assets/%s_ma_%s.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
       }
     } else if(opt$do_ttest) {
@@ -957,13 +958,13 @@ if(report_initialized) {
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
         report_lines <- c(report_lines, sprintf("**%s**", comp_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot (t-test):\n  ![Volcano](plot/%s_volcano_%s_ttest.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- Volcano Plot (t-test):\n  ![Volcano](assets/%s_volcano_%s_ttest.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot (t-test):\n  ![MA Plot](plot/%s_ma_%s_ttest.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- MA Plot (t-test):\n  ![MA Plot](assets/%s_ma_%s_ttest.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](assets/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](assets/%s_ma_%s_wilcox.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
       }
     } else {
@@ -972,9 +973,9 @@ if(report_initialized) {
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
         report_lines <- c(report_lines, sprintf("**%s (Wilcoxon)**", comp_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](assets/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](assets/%s_ma_%s_wilcox.png)", opt$output, safe_name))
         report_lines <- c(report_lines, "")
       }
     }
@@ -999,8 +1000,10 @@ if(report_initialized) {
   report_lines <- c(report_lines, "|------|-------------|")
   report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
   report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
-  report_lines <- c(report_lines, "| `plot/*_volcano_*.png` | Volcano plots |")
-  report_lines <- c(report_lines, "| `plot/*_ma_*.png` | MA plots |")
+  report_lines <- c(report_lines, "| `plot/*_volcano_*.pdf` | Volcano plots (PDF) |")
+  report_lines <- c(report_lines, "| `plot/*_ma_*.pdf` | MA plots (PDF) |")
+  report_lines <- c(report_lines, "| `assets/*_volcano_*.png` | Volcano plots (PNG for report) |")
+  report_lines <- c(report_lines, "| `assets/*_ma_*.png` | MA plots (PNG for report) |")
   report_lines <- c(report_lines, "")
   
   # Processing Log section
