@@ -1,8 +1,9 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 26, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录，添加Markdown报告和PNG图表输出
 
 distmethod = "manhattan";
 ### package check ########
@@ -25,6 +26,8 @@ option_list = list(
               type='character',help="meta file path"),
   make_option("--output", action="store", default = NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default = NA,
+              type='character',help="output directory path"),
   make_option("--funcdir", action="store", default =NA,
               type='character',help="preprocess function file path"),
   make_option("--sdout", action="store", default = NA,
@@ -44,7 +47,11 @@ rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","loginfo","existpck
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0.1 parameters evaluate ######
-if(!dir.exists("plot")) dir.create("plot")
+#V2.1: 使用outputdir参数创建plot目录
+if(is.na(opt$outputdir)) {
+  opt$outputdir = "."
+  message("no outputdir, setting to '.' as current directory")
+}
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
@@ -54,6 +61,8 @@ if(is.na(opt$funcdir)) {
   if(file.exists("preprocess_func.R"))
     source("preprocess_func.R") else
       stop("No preprocess_func.R file in fundir path.")
+  #V2.1: 使用outputdir参数创建plot目录
+  plot_dir <- get_plot_dir(opt$outputdir)
 } else {
   if(tail(unlist(strsplit(opt$funcdir,"")),1) == "/"){
     funcpath = paste0(opt$funcdir,"preprocess_func.R");
@@ -63,6 +72,8 @@ if(is.na(opt$funcdir)) {
   if(file.exists(funcpath))
     source(funcpath) else
       stop("No preprocess_func.R file in fundir path.")
+  #V2.1: 使用outputdir参数创建plot目录
+  plot_dir <- get_plot_dir(opt$outputdir)
 }
 if(is.na(opt$sdout)) {
   opt$sdout = 3; message("Setting sdout to default: 3")
@@ -121,6 +132,119 @@ otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"loginfo" %in% ls()) loginfo = list();
 
+### 0.1.5 Find Step0 Report ####
+# Function to find step0 report based on quantfile
+find_step0_report <- function(quantfile, outputdir) {
+  if(is.na(quantfile) || !file.exists(quantfile)) {
+    return(NULL)
+  }
+  # Extract base name from quantfile (remove extension)
+  base_name <- sub("\\.(txt|csv|RData)$", "", basename(quantfile))
+  # Also try removing common suffixes
+  base_name_alt <- sub("(_raw|_step0).*", "", base_name)
+  
+  # Possible report file patterns for step0
+  possible_reports <- c(
+    file.path(outputdir, paste0(base_name, "_step0_report.md")),
+    file.path(outputdir, paste0(base_name, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_step0_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_report.md")),
+    # Alternative base names
+    file.path(outputdir, paste0(base_name_alt, "_step0_report.md")),
+    file.path(outputdir, paste0(base_name_alt, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_step0_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_report.md"))
+  )
+  
+  # Remove duplicates and check existence
+  possible_reports <- unique(possible_reports)
+  for(report_path in possible_reports) {
+    if(file.exists(report_path)) {
+      message("Found step0 report: ", report_path)
+      return(report_path)
+    }
+  }
+  message("No step0 report found for: ", quantfile)
+  return(NULL)
+}
+
+# Look for step0 report
+step0_report_file <- NULL
+if(!is.na(opt$quantfile)) {
+  message("Looking for step0 report based on quantfile: ", opt$quantfile)
+  step0_report_file <- find_step0_report(opt$quantfile, opt$outputdir)
+  if(!is.null(step0_report_file)) {
+    message("Found step0 report at: ", step0_report_file)
+  }
+}
+
+### 0.1.6 Initialize Markdown Report ####
+# V2.1 revised: Initialize Markdown report after loading data with step1-specific naming
+# Determine report file name (step1-specific)
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step1_report.md"))
+
+# Check if input data has report_file object (from previous step)
+existing_report <- NULL
+if("report_file" %in% otherobj) {
+  if(exists("report_file") && file.exists(report_file)) {
+    existing_report <- report_file
+  }
+}
+
+# Check if target report already exists (same output name, multiple runs)
+report_append <- file.exists(report_file)
+
+# If no target report but have existing report from different output, copy it
+if(!report_append && !is.null(existing_report) && file.exists(existing_report)) {
+  if(normalizePath(existing_report, mustWork = FALSE) != normalizePath(report_file, mustWork = FALSE)) {
+    file.copy(existing_report, report_file, overwrite = TRUE)
+    report_append <- TRUE
+  }
+}
+
+# Initialize or append report
+if(!report_append) {
+  # Create new report
+  cat("# Step 1: MS Proteomics Preprocessing Report\n\n", file = report_file)
+  cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+  
+  # Write parameters section
+  cat("## Parameters\n\n", file = report_file, append = TRUE)
+  cat("| Parameter | Value |\n", file = report_file, append = TRUE)
+  cat("|-----------|-------|\n", file = report_file, append = TRUE)
+  cat("| quantfile | ", ifelse(is.na(opt$quantfile), "NA", opt$quantfile), " |\n", file = report_file, append = TRUE)
+  cat("| covarfile | ", ifelse(is.na(opt$covarfile), "NA", opt$covarfile), " |\n", file = report_file, append = TRUE)
+  cat("| output | ", opt$output, " |\n", file = report_file, append = TRUE)
+  cat("| outputdir | ", opt$outputdir, " |\n", file = report_file, append = TRUE)
+  cat("| step | ", opt$step, " |\n", file = report_file, append = TRUE)
+  cat("| sdout | ", opt$sdout, " |\n", file = report_file, append = TRUE)
+  cat("| maxNA | ", opt$maxNA, " |\n", file = report_file, append = TRUE)
+  cat("| value | ", opt$value, " |\n\n", file = report_file, append = TRUE)
+  
+  # Add step0 report link if found
+  if(!is.null(step0_report_file)) {
+    cat("### Linked Report\n\n", file = report_file, append = TRUE)
+    cat("**Previous Step:** [Step 0 Report](", basename(step0_report_file), ")\n\n", file = report_file, append = TRUE)
+  }
+} else {
+  # Append to existing report (same output, multiple runs)
+  cat("\n---\n\n", file = report_file, append = TRUE)
+  cat("## Step 1: MS Proteomics Preprocessing Report (Additional Run)\n\n", file = report_file, append = TRUE)
+  cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+  
+  cat("## Parameters\n\n", file = report_file, append = TRUE)
+  cat("| Parameter | Value |\n", file = report_file, append = TRUE)
+  cat("|-----------|-------|\n", file = report_file, append = TRUE)
+  cat("| quantfile | ", ifelse(is.na(opt$quantfile), "NA", opt$quantfile), " |\n", file = report_file, append = TRUE)
+  cat("| covarfile | ", ifelse(is.na(opt$covarfile), "NA", opt$covarfile), " |\n", file = report_file, append = TRUE)
+  cat("| output | ", opt$output, " |\n", file = report_file, append = TRUE)
+  cat("| outputdir | ", opt$outputdir, " |\n", file = report_file, append = TRUE)
+  cat("| step | ", opt$step, " |\n", file = report_file, append = TRUE)
+  cat("| sdout | ", opt$sdout, " |\n", file = report_file, append = TRUE)
+  cat("| maxNA | ", opt$maxNA, " |\n", file = report_file, append = TRUE)
+  cat("| value | ", opt$value, " |\n\n", file = report_file, append = TRUE)
+}
+
 ### 0.3 obj check (covar can not exist) ################
 #covar quant match
 if("covar" %in% ls()) {
@@ -166,7 +290,6 @@ step1p_final_rec = NULL
 miss.value = NA;
 if(!"IDinf" %in% ls()) stop("no IDinf, it seem not MS data.")
 if(nrow(IDinf) != nrow(quant)) stop("IDinf and quant row number are not the same.")
-if(!"./plot" %in% list.dirs()) {dir.create("plot")}
 ### 1. data norm ######
 cat('-----MS data preprocess 1----- \n')
 if("data_rmOut_imp" %in% otherobj) quant <- data_rmOut_imp$intensity
@@ -194,6 +317,13 @@ if(grepl("1",opt$step)) {
   cat("---norm all was finished.--- \n")
   step1p_final_rec = c(step1p_final_rec," *** norm all  ***\n")
   if(opt$value == "value") quant_norm <- log2(quant) else quant_norm = quant #recored the step res
+  
+  # Report: Normalization
+  cat("## Processing Steps\n\n", file = report_file, append = TRUE)
+  cat("### Step 1: Normalization\n\n", file = report_file, append = TRUE)
+  cat("- **Method**: Total intensity normalization\n", file = report_file, append = TRUE)
+  cat("- **Samples**: ", s1, "\n", file = report_file, append = TRUE)
+  cat("- **Rows**: ", g1, "\n\n", file = report_file, append = TRUE)
 }
 #remove rows which have 0,1,2 value
 NArow <- rowSums(!is.na(quant))
@@ -215,8 +345,8 @@ if("covar" %in% ls()) covar_raw <- covar
 if(grepl("2",opt$step)) {
   #remove outlier
   data_rmOut = try(Outlier_Detect(list(inf = IDinf,intensity = quant), maxNA = 1,
-                                  sdout = opt$sdout,filename = opt$output,
-                                  distmethod = distmethod, A.IAC = FALSE),silent = TRUE)
+                                  sdout = opt$sdout,filename = paste0(opt$output,"_step1"),
+                                  distmethod = distmethod, A.IAC = FALSE, outputdir = opt$outputdir),silent = TRUE)
   if(class(data_rmOut)=="try-error") {
     message(data_rmOut)
     stop("Outlier detection have some bugs.")}
@@ -242,10 +372,10 @@ if(grepl("2",opt$step)) {
   loginfo2 = list(record = paste0(record, "Remove outlier, sdout:",opt$sdout,", distmethod:",distmethod,
                                   "\n remove ",s1-s2," samples and remain ", s2, " sample X ",g2," rows.\n"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,"_rmOut.RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,"_rmOut.RData")),
                   packageVersion =paste("DDPNA",packageVersion("DDPNA")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_MS V2.0", parameter = opt,
+                  srcipt = "step1_MS v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1_removeOutlier = list(loginfo2))
   if("covar" %in% ls()) {
@@ -259,10 +389,33 @@ if(grepl("2",opt$step)) {
       message("Running is break in step 2.")
     }
     covar_rm <- covar
-    save(covar,quant,IDinf,data_rmOut,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut.RData"))
-  } else save(quant,IDinf,data_rmOut,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut.RData"))
+    save(covar,quant,IDinf,data_rmOut,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut.RData")))
+  } else save(quant,IDinf,data_rmOut,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut.RData")))
   quant_rm <- quant
   IDinf_rm <- IDinf
+  
+  # Report: Outlier removal
+  if(!grepl("1",opt$step)) cat("## Processing Steps\n\n", file = report_file, append = TRUE)
+  cat("### Step ", ifelse(grepl("1",opt$step), "2", "1"), ": Outlier Removal\n\n", file = report_file, append = TRUE)
+  cat("- **Method**: ", distmethod, " distance\n", file = report_file, append = TRUE)
+  cat("- **SD threshold**: ", opt$sdout, "\n", file = report_file, append = TRUE)
+  cat("- **Samples removed**: ", s1-s2, "\n", file = report_file, append = TRUE)
+  cat("- **Samples remaining**: ", s2, "\n", file = report_file, append = TRUE)
+  cat("- **Rows remaining**: ", g2, "\n\n", file = report_file, append = TRUE)
+  
+  # Insert outlier detection plots
+  cat("#### Outlier Detection Plots\n\n", file = report_file, append = TRUE)
+  assets_dir <- file.path(opt$outputdir, "assets")
+  # Search for outlier plot files in assets/ (PNG files are saved to assets/)
+  outlier_plots <- list.files(assets_dir, pattern = paste0("^", gsub("\\.", "\\\\.", opt$output), "_step1_outliersample_.*\\.png$"), full.names = FALSE)
+  if(length(outlier_plots) > 0) {
+    for(plot_file in sort(outlier_plots)) {
+      cat(paste0("![Outlier Detection Plot](assets/", plot_file, ")\n\n"), file = report_file, append = TRUE)
+    }
+  } else {
+    cat("*Outlier detection plots were not found.*\n\n", file = report_file, append = TRUE)
+  }
+  
   cat('---sample outlier was removed--- \n')
   cat(paste0("remove ",s1-s2," samples and remain ", s2, " sample X ",g2," rows \n"))
   step1p_final_rec = c(step1p_final_rec,
@@ -289,19 +442,26 @@ if(grepl("3",opt$step)) {
                                   "remove ",g2-g3," rows and remain ", s2, " sample X ",g3," rows \n",
                                   "sample abundance plot, density plot and pca plot is saved in plot dir to check the data distribtuion"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,"_rmOut_filter.RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,"_rmOut_filter.RData")),
                   packageVersion =paste("DDPNA",packageVersion("DDPNA")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_MS V2.0", parameter = opt,
+                  srcipt = "step1_MS v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1_gene_filter = list(loginfo3))
   #save quant info
   if("covar" %in% ls()) {
     covar_rm <- covar
-    save(covar,quant,IDinf,data_rmOut,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut_filter.RData"))
-  } else save(quant,IDinf,data_rmOut,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut_filter.RData"))
+    save(covar,quant,IDinf,data_rmOut,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut_filter.RData")))
+  } else save(quant,IDinf,data_rmOut,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut_filter.RData")))
   quant_filter <- quant
   IDinf_filter <- IDinf
+
+  # Report: Gene filter
+  step_num <- length(grep("[123]", opt$step)) + 1
+  cat("### Step ", step_num, ": Feature Filtering\n\n", file = report_file, append = TRUE)
+  cat("- **Max NA ratio**: ", opt$maxNA, "\n", file = report_file, append = TRUE)
+  cat("- **Rows removed**: ", g2-g3, "\n", file = report_file, append = TRUE)
+  cat("- **Rows remaining**: ", g3, "\n\n", file = report_file, append = TRUE)
 
   cat('---gene filter was finished.--- \n');
   cat(paste0("remove ",g2-g3," rows and remain ", s3, " sample X ",g3," rows \n"))
@@ -321,10 +481,10 @@ if(grepl("4",opt$step)) {
                                   "knn imputation will change by different random seed.\n",
                                   "sample abundance plot, density plot and pca plot is saved in plot dir to check the data distribtuion"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,"_rmOut_impute.RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,"_rmOut_impute.RData")),
                   packageVersion =paste("DDPNA",packageVersion("DDPNA")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_MS V2.0", parameter = opt,
+                  srcipt = "step1_MS v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1_imputation = list(loginfo4))
   #save quant info
@@ -342,14 +502,23 @@ if(grepl("4",opt$step)) {
       opt$step = 4
       message("Running is break in step 4.")
     }
-    save(covar,quant,IDinf,data_rmOut_imp,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut_impute.RData"))
-  } else save(quant,IDinf,data_rmOut_imp,loginfo,list = otherobj, file = paste0(opt$output,"_rmOut_impute.RData"))
+    save(covar,quant,IDinf,data_rmOut_imp,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut_impute.RData")))
+  } else save(quant,IDinf,data_rmOut_imp,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_rmOut_impute.RData")))
+  
+  # Report: Imputation
+  step_num <- length(grep("[1234]", opt$step))
+  cat("### Step ", step_num, ": Missing Value Imputation\n\n", file = report_file, append = TRUE)
+  cat("- **Method**: KNN imputation\n", file = report_file, append = TRUE)
+  cat("- **Final samples**: ", ncol(quant), "\n", file = report_file, append = TRUE)
+  cat("- **Final rows**: ", nrow(quant), "\n\n", file = report_file, append = TRUE)
+  
   cat('---missing value was imputed--- \n');
   step1p_final_rec = c(step1p_final_rec,
                        "*** missing value was imputed  ***\n")
 }
 
 ### pca #####
+pca_png_files <- c()
 if("covar" %in% ls()) {
   plotpdfname = "_step1"
   pca_list <- list(raw =quant_raw,
@@ -357,6 +526,9 @@ if("covar" %in% ls()) {
                    rm = if(grepl("2",opt$step)) quant_rm,
                    filter = if(grepl("3",opt$step))  quant_filter,
                    imp = if(grepl("4",opt$step)) quant_imp)
+  # Check if covar exists for PCA plotting
+  pca_covar_available <- !is.null(covar)
+  
   if(!is.null(covar)) {
     cat("- Draw PCA plot - \n")
     for(i in names(pca_list)) {
@@ -364,10 +536,17 @@ if("covar" %in% ls()) {
     }
     message("PCA is calcluated.")
     if(grepl("1|2",opt$step))
-      save(covar,covar_raw,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData")) else
-        save(covar,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData"))
+      save(covar,covar_raw,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData"))) else
+        save(covar,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData")))
     message("pca result was saved.")
-    pdf(paste0("plot/",opt$output,plotpdfname,"_pcaplot.pdf"), width = 10, height = 8)
+    
+    # V2.1: Save PCA plots as both PDF and PNG
+    pca_pdf_path <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pca.pdf"))
+    # PDF -> plot/, PNG -> assets/
+    assets_dir <- file.path(opt$outputdir, "assets")
+    if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+    
+    pdf(pca_pdf_path, width = 10, height = 8)
     for(i in names(pca_list)) {
       pcadata <- pca_list[[i]]
       if(!is.null(pcadata)) {
@@ -380,8 +559,42 @@ if("covar" %in% ls()) {
       }
     }
     dev.off()
-    message("pca plot was finished.")
-  } else cat(" - covar is NULL, will not draw PCA plot.- \n")
+    
+    # Save as PNG - each plot as separate file to assets/
+    # Determine suffix for raw data when only step3 or step4 is run
+    pca_raw_suffix <- ""
+    if(!grepl("1",opt$step) && !grepl("2",opt$step)) {
+      if(grepl("3",opt$step) && grepl("4",opt$step)) {
+        pca_raw_suffix <- "_only34"
+      } else if(grepl("3",opt$step)) {
+        pca_raw_suffix <- "_only3"
+      } else if(grepl("4",opt$step)) {
+        pca_raw_suffix <- "_only4"
+      }
+    }
+    
+    for(i in names(pca_list)) {
+      pcadata <- pca_list[[i]]
+      if(!is.null(pcadata)) {
+        if(inherits(pcadata,"prcomp")) {
+          # Add suffix for raw plot when only step3/4 is run
+          file_suffix <- ifelse(i == "raw", pca_raw_suffix, "")
+          pca_png_base <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pca_",i, file_suffix))
+          if(i %in% c("norm","raw")) pca_plot_var(pcadata, covar_raw, title = paste0(i, file_suffix), filename = pca_png_base)
+          if(i %in% c("rm","filter")) pca_plot_var(pcadata, covar_rm, title = i, filename = pca_png_base)
+          if(i == "imp") pca_plot_var(pcadata, covar, title = i, filename = pca_png_base)
+        }
+      }
+    }
+    pca_png_files <- c(pca_png_files, paste0(opt$output,plotpdfname,"_pca_*.png"))
+    message("pca plot was saved as PDF and PNG.")
+  } else {
+    cat(" - covar is NULL, will not draw PCA plot.- \n")
+    pca_covar_available <- FALSE
+  }
+} else {
+  cat(" - covar object not found, will not draw PCA plot.- \n")
+  pca_covar_available <- FALSE
 }
 
 
@@ -402,8 +615,30 @@ if(ncol(quant) > 50) {message("Samples large than 50, random pick 50 sample to d
   if(grepl("3",opt$step)) quant_filter2 <- quant_filter
   if(grepl("4",opt$step)) quant_imp2 <- quant_imp
 }
-pdf(paste0("plot/",opt$output,"_sample&gene distribution.pdf"),width = width,height = 6)
-boxplot((quant_raw2), main = "raw intensity distribution in sample",ylab = "log2 value");
+
+# V2.1: Save boxplot/density plots as both PDF and PNG
+# PDF -> plot/, PNG -> assets/
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+
+# Determine suffix for raw data files when only step3 or step4 is run
+step_suffix <- ""
+if(!grepl("1",opt$step) && !grepl("2",opt$step)) {
+  if(grepl("3",opt$step) && grepl("4",opt$step)) {
+    step_suffix <- "_only34"
+  } else if(grepl("3",opt$step)) {
+    step_suffix <- "_only3"
+  } else if(grepl("4",opt$step)) {
+    step_suffix <- "_only4"
+  }
+}
+raw_suffix <- step_suffix
+
+dist_pdf <- file.path(plot_dir, paste0(opt$output,"_step1_distribution",step_suffix,".pdf"))
+dist_png <- file.path(assets_dir, paste0(opt$output,"_step1_distribution",step_suffix,".png"))
+
+pdf(dist_pdf, width = width, height = 6)
+boxplot((quant_raw2), main = paste0("raw", raw_suffix," intensity distribution in sample"),ylab = "log2 value");
 if(grepl("1",opt$step)) boxplot((quant_norm2),main = "norm intensity distribution in sample",ylab = "log2 value");
 if(grepl("3",opt$step)) boxplot((quant_filter2),main = "gene filter intensity distribution in sample",ylab = "log2 value");
 if(grepl("4",opt$step)) boxplot((quant_imp2), main = "impute data distribution in sample",ylab = "log2 value");
@@ -420,7 +655,228 @@ if(opt$value == "value") {
 }
 dev.off()
 
+# Save as PNG - separate files for each plot to assets/
+# Boxplots
+boxplot_raw_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_raw", raw_suffix, ".png"))
+png(boxplot_raw_png, width = width*300, height = 6*300, res = 300)
+boxplot((quant_raw2), main = paste0("raw", raw_suffix," intensity distribution in sample"),ylab = "log2 value")
+dev.off()
+
+if(grepl("1",opt$step)) {
+  boxplot_norm_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_norm.png"))
+  png(boxplot_norm_png, width = width*300, height = 6*300, res = 300)
+  boxplot((quant_norm2),main = "norm intensity distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+if(grepl("3",opt$step)) {
+  boxplot_filter_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_filter.png"))
+  png(boxplot_filter_png, width = width*300, height = 6*300, res = 300)
+  boxplot((quant_filter2),main = "gene filter intensity distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+if(grepl("4",opt$step)) {
+  boxplot_imp_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_imp.png"))
+  png(boxplot_imp_png, width = width*300, height = 6*300, res = 300)
+  boxplot((quant_imp2), main = "impute data distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+# Density evaluation plots
+# V2.1: Helper function to safely generate density plot
+safe_densityplot <- function(data, title, png_path, ...) {
+  png(png_path, width = 12*300, height = 10*300, res = 300)
+  plot_success <- tryCatch({
+    densityplot(data, title, savefile = FALSE, ...)
+    TRUE
+  }, error = function(e) {
+    message("Density plot failed for '", title, "': ", e$message)
+    FALSE
+  })
+  dev.off()
+  # Remove empty/invalid PNG file if plot failed
+  if(!plot_success && file.exists(png_path)) {
+    file.remove(png_path)
+    return(NULL)
+  }
+  return(if(plot_success) png_path else NULL)
+}
+
+density_plot_files <- list()
+if(opt$value == "value") {
+  density_plot_files$raw <- safe_densityplot(2^quant_raw, "raw data", 
+                                              file.path(assets_dir, paste0(opt$output,"_step1_density_raw",step_suffix,".png")), verbose = 1)
+  
+  if(grepl("1",opt$step)) {
+    density_plot_files$norm <- safe_densityplot(quant_norm, "norm data",
+                                                 file.path(assets_dir, paste0(opt$output,"_step1_density_norm.png")))
+  }
+  if(grepl("3",opt$step)) {
+    density_plot_files$filter <- safe_densityplot(2^quant_filter, "gene filter data",
+                                                   file.path(assets_dir, paste0(opt$output,"_step1_density_filter.png")))
+  }
+  if(grepl("4",opt$step)) {
+    density_plot_files$imp <- safe_densityplot(2^quant_imp, "impute data",
+                                                file.path(assets_dir, paste0(opt$output,"_step1_density_imp.png")))
+  }
+} else {
+  density_plot_files$raw <- safe_densityplot(quant_raw, "raw data",
+                                              file.path(assets_dir, paste0(opt$output,"_step1_density_raw",step_suffix,".png")), verbose = 1)
+  
+  if(grepl("1",opt$step)) {
+    density_plot_files$norm <- safe_densityplot(quant_norm, "norm data",
+                                                 file.path(assets_dir, paste0(opt$output,"_step1_density_norm.png")))
+  }
+  if(grepl("3",opt$step)) {
+    density_plot_files$filter <- safe_densityplot(quant_filter, "gene filter data",
+                                                   file.path(assets_dir, paste0(opt$output,"_step1_density_filter.png")))
+  }
+  if(grepl("4",opt$step)) {
+    density_plot_files$imp <- safe_densityplot(quant_imp, "impute data",
+                                                file.path(assets_dir, paste0(opt$output,"_step1_density_imp.png")))
+  }
+}
+
+### Report: Plots Section ####
+cat("## Generated Plots\n\n", file = report_file, append = TRUE)
+
+# Create assets directory for report images
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+
+# PNG files are in assets/, PDF files are in plot/
+assets_dir <- file.path(opt$outputdir, "assets")
+
+# PCA Plots section - check if covar was available
+if(!pca_covar_available) {
+  cat("### PCA Plots\n\n", file = report_file, append = TRUE)
+  cat("*PCA plots were not generated because covariate information (covar) is not available. PCA plots require sample metadata for visualization.*\n\n", file = report_file, append = TRUE)
+} else {
+  pca_plot_files <- list.files(assets_dir, pattern = paste0(opt$output, "_step1_pca_.*\\.png$"), full.names = FALSE)
+  if(length(pca_plot_files) > 0) {
+    cat("### PCA Plots\n\n", file = report_file, append = TRUE)
+    for(png_file in sort(pca_plot_files)) {
+      cat("![PCA Plot](assets/", png_file, ")\n\n", sep = "", file = report_file, append = TRUE)
+    }
+  }
+}
+
+# Boxplot and Density plots - embed from assets/
+cat("### Sample Boxplot\n\n", file = report_file, append = TRUE)
+# Determine raw boxplot suffix for report lookup
+boxplot_raw_suffix_report <- ""
+if(!grepl("1",opt$step) && !grepl("2",opt$step)) {
+  if(grepl("3",opt$step) && grepl("4",opt$step)) {
+    boxplot_raw_suffix_report <- "_only34"
+    cat("*Note: Steps 3 and 4 were run. Raw data boxplot is labeled as 'box_raw_only34' to indicate the analysis context.*\n\n", file = report_file, append = TRUE)
+  } else if(grepl("3",opt$step)) {
+    boxplot_raw_suffix_report <- "_only3"
+    cat("*Note: Only step 3 was run. Raw data boxplot is labeled as 'box_raw_only3' to indicate the analysis context.*\n\n", file = report_file, append = TRUE)
+  } else if(grepl("4",opt$step)) {
+    boxplot_raw_suffix_report <- "_only4"
+    cat("*Note: Only step 4 was run. Raw data boxplot is labeled as 'box_raw_only4' to indicate the analysis context.*\n\n", file = report_file, append = TRUE)
+  }
+}
+boxplot_files <- c()
+if(file.exists(file.path(assets_dir, paste0(opt$output, "_step1_box_raw", boxplot_raw_suffix_report, ".png")))) {
+  boxplot_files <- c(boxplot_files, paste0(opt$output, "_step1_box_raw", boxplot_raw_suffix_report, ".png"))
+}
+if(grepl("1",opt$step) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_box_norm.png")))) {
+  boxplot_files <- c(boxplot_files, paste0(opt$output, "_step1_box_norm.png"))
+}
+if(grepl("3",opt$step) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_box_filter.png")))) {
+  boxplot_files <- c(boxplot_files, paste0(opt$output, "_step1_box_filter.png"))
+}
+if(grepl("4",opt$step) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_box_imp.png")))) {
+  boxplot_files <- c(boxplot_files, paste0(opt$output, "_step1_box_imp.png"))
+}
+for(boxplot_file in boxplot_files) {
+  cat(paste0("![Boxplot Distribution](assets/", boxplot_file, ")\n\n"), file = report_file, append = TRUE)
+}
+
+cat("### Gene Density Plot\n\n", file = report_file, append = TRUE)
+
+# Check which density plots were successfully generated (in assets/)
+density_plot_success <- list()
+density_plot_success$raw <- !is.null(density_plot_files$raw) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_density_raw",step_suffix,".png")))
+if(grepl("1",opt$step)) density_plot_success$norm <- !is.null(density_plot_files$norm) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_density_norm.png")))
+if(grepl("3",opt$step)) density_plot_success$filter <- !is.null(density_plot_files$filter) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_density_filter.png")))
+if(grepl("4",opt$step)) density_plot_success$imp <- !is.null(density_plot_files$imp) && file.exists(file.path(assets_dir, paste0(opt$output, "_step1_density_imp.png")))
+
+# Embed successful density plots
+density_files <- c()
+if(density_plot_success$raw) {
+  density_files <- c(density_files, paste0(opt$output, "_step1_density_raw",step_suffix,".png"))
+}
+if(grepl("1",opt$step) && density_plot_success$norm) {
+  density_files <- c(density_files, paste0(opt$output, "_step1_density_norm.png"))
+}
+if(grepl("3",opt$step) && density_plot_success$filter) {
+  density_files <- c(density_files, paste0(opt$output, "_step1_density_filter.png"))
+}
+if(grepl("4",opt$step) && density_plot_success$imp) {
+  density_files <- c(density_files, paste0(opt$output, "_step1_density_imp.png"))
+}
+
+for(density_file in density_files) {
+  cat(paste0("![Density Distribution](assets/", density_file, ")\n\n"), file = report_file, append = TRUE)
+}
+
+# Report failed density plots
+failed_density <- c()
+if(!density_plot_success$raw) failed_density <- c(failed_density, "raw data")
+if(grepl("1",opt$step) && !is.null(density_plot_success$norm) && !density_plot_success$norm) failed_density <- c(failed_density, "normalized data")
+if(grepl("3",opt$step) && !is.null(density_plot_success$filter) && !density_plot_success$filter) failed_density <- c(failed_density, "filtered data")
+if(grepl("4",opt$step) && !is.null(density_plot_success$imp) && !density_plot_success$imp) failed_density <- c(failed_density, "imputed data")
+
+if(length(failed_density) > 0) {
+  cat("**Note:** Density plots could not be generated for the following datasets (possibly due to insufficient data points): ", 
+      paste(failed_density, collapse = ", "), "\n\n", file = report_file, append = TRUE)
+}
+
+### Report: Output Files Summary ####
+cat("## Output Files Summary\n\n", file = report_file, append = TRUE)
+cat("| File | Description |\n", file = report_file, append = TRUE)
+cat("|------|-------------|\n", file = report_file, append = TRUE)
+
+if(grepl("1",opt$step)) {
+  cat("| `", paste0(opt$output,"_norm.RData"), "` | Normalized data |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("2",opt$step)) {
+  cat("| `", paste0(opt$output,"_rmOut.RData"), "` | Data after outlier removal |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("3",opt$step)) {
+  cat("| `", paste0(opt$output,"_rmOut_filter.RData"), "` | Data after feature filtering |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("4",opt$step)) {
+  cat("| `", paste0(opt$output,"_rmOut_impute.RData"), "` | Data after imputation |\n", sep = "", file = report_file, append = TRUE)
+}
+if("covar" %in% ls()) {
+  cat("| `", paste0(opt$output,"_step1_pca.RData"), "` | PCA results |\n", sep = "", file = report_file, append = TRUE)
+  cat("| `", paste0(opt$output,"_step1_pca.pdf"), "` | PCA plots (PDF) |\n", sep = "", file = report_file, append = TRUE)
+  cat("| `", paste0(opt$output,"_step1_pca.png"), "` | PCA plots (PNG) |\n", sep = "", file = report_file, append = TRUE)
+}
+cat("| `", paste0(opt$output,"_step1_distribution.pdf"), "` | Distribution plots (PDF) |\n", sep = "", file = report_file, append = TRUE)
+cat("| `", paste0(opt$output,"_step1_distribution.png"), "` | Distribution plots (PNG) |\n", sep = "", file = report_file, append = TRUE)
+cat("\n", file = report_file, append = TRUE)
+
+# List all plot files in plot directory
+cat("### Plot Files in Directory\n\n", file = report_file, append = TRUE)
+cat("The following plot files are available in the `plot/` directory:\n\n", file = report_file, append = TRUE)
+all_plot_files <- list.files(plot_dir, pattern = paste0("^", opt$output), full.names = FALSE)
+if(length(all_plot_files) > 0) {
+  for(plot_file in sort(all_plot_files)) {
+    cat("- `plot/", plot_file, "`\n", sep = "", file = report_file, append = TRUE)
+  }
+} else {
+  cat("*No plot files found.*\n", file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+cat("---\n\n**Analysis completed successfully.**\n\n", file = report_file, append = TRUE)
+cat("*Report generated by quantWF step1_MS v2.1*\n", file = report_file, append = TRUE)
+
 cat("\n")
 cat(step1p_final_rec)
 cat("--- step1_MS all finished ---\n")
-

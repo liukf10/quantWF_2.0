@@ -1,8 +1,10 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录
+#260325 changed to Markdown report format, added PNG output for plots
 
 #covarfile must be csv file
 #quantfile must be RData or csv file.
@@ -21,6 +23,8 @@ option_list = list(
               type='character',help="meta file path"),
   make_option("--output", action="store", default=NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default=NA,
+              type='character',help="output directory path, default is current dir."),
   make_option("--funcdir", action="store", default=NA,
               type='character',help="preprocess function file path"),
   make_option("--keepvar", action="store", default=NA,
@@ -41,7 +45,12 @@ rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","loginfo","existpck
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0.1 parameters evaluate (batch) ######
-if(!dir.exists("plot")) dir.create("plot")
+if(is.na(opt$outputdir)) {
+  opt$outputdir = "."; message("Setting outputdir as default: current dir.")
+}
+#V2.1: 使用outputdir参数创建plot目录
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
@@ -82,6 +91,7 @@ if(is.na(opt$evaluate_method)) {
   opt$evaluate_method = "pvca&pca"; message("Setting evaluate_method as default: pvca&pca.")}
 if(is.na(opt$BIC_cores)) {
   opt$BIC_cores = 30; message("Setting BIC_cores as default: 30.")}
+
 ### 0.2 read quant & covar info ####
 #no quantfile should have quant obj
 if(is.na(opt$quantfile)) {
@@ -117,6 +127,51 @@ otherobj <- ls();
 otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"loginfo" %in% ls()) loginfo = list();
+
+### Initialize Markdown Report ####
+# V2.1 revised: Initialize Markdown report after loading data
+# Determine report file name (keep existing batch_adj naming)
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_batch_adj_report.md"))
+
+# Check if input data has report_file object (from previous step)
+loaded_report_file <- NULL
+if("report_file" %in% otherobj) {
+  if(exists("report_file")) {
+    loaded_report_file <- report_file
+  }
+}
+
+# Check if target report already exists
+report_append <- file.exists(report_file)
+
+# If no target report but have loaded report from different output, copy it
+if(!report_append && !is.null(loaded_report_file) && file.exists(loaded_report_file)) {
+  if(normalizePath(loaded_report_file, mustWork = FALSE) != normalizePath(report_file, mustWork = FALSE)) {
+    file.copy(loaded_report_file, report_file, overwrite = TRUE)
+    report_append <- TRUE
+  }
+}
+
+# Initialize or append report
+if(!report_append) {
+  # Create new report
+  report_lines <- c()
+  report_lines <- c(report_lines, "# Step 2: Batch Adjustment Report")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+  report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+  report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+  report_lines <- c(report_lines, "")
+  writeLines(report_lines, report_file)
+} else {
+  # Append to existing report
+  cat("\n---\n\n", file = report_file, append = TRUE)
+  cat("## Step 2: Batch Adjustment Report (Additional Run)\n\n", file = report_file, append = TRUE)
+  cat(paste0("**Date:** ", Sys.time(), "\n\n"), file = report_file, append = TRUE)
+  cat(paste0("**Output Prefix:** ", opt$output, "\n\n"), file = report_file, append = TRUE)
+  cat(paste0("**Output Directory:** ", opt$outputdir, "\n\n"), file = report_file, append = TRUE)
+}
+
 ### 0.3 obj check (covar should have batchname) ###########
 if(length(opt$batch_name) > 1) stop("wrong batch_name: only one batch allowed.") #230202 updated
 if(!"covar" %in% ls()) stop ("no covar object, please check the data.");
@@ -170,7 +225,7 @@ message("keepvar is setting to NULL.")
   opt$keepvar <- unlist(strsplit(opt$keepvar,","));
   if(any(!opt$keepvar %in% colnames(covar)))
     stop("wrong keepvar name: keepvar is not in covar.")
-}
+  }
 if(!is.null(opt$ref_batch)) {
   message("only use ref_batch in Combat.")
   if(length(opt$ref_batch) != 1) stop("ref_batch should be one vector.")
@@ -178,7 +233,26 @@ if(!is.null(opt$ref_batch)) {
     stop("ref_batch should be one of vector in batch_name column.")
 }
 cat('-----data preprocess 2 batch effect adjust----- \n')
-if(!"./plot" %in% list.dirs()) {dir.create("plot")}
+
+# Record data information to report
+report_lines <- c(report_lines, "## Data Summary")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Number of features:** ", nrow(quant)))
+report_lines <- c(report_lines, paste0("- **Number of samples:** ", ncol(quant)))
+report_lines <- c(report_lines, paste0("- **Number of batches:** ", length(unique(covar[,opt$batch_name]))))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "### Batch Distribution")
+report_lines <- c(report_lines, "")
+batch_table <- table(covar[,opt$batch_name])
+for(b in names(batch_table)) {
+  report_lines <- c(report_lines, paste0("- ", b, ": ", batch_table[b], " samples"))
+}
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Batch Adjustment")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Adjustment method:** ", opt$method))
+
 ### 1. batch adjust #########
 if(!is.null(opt$keepvar)) {
   fmla <- as.formula(paste("~ ", paste(opt$keepvar, collapse= "+")));
@@ -192,14 +266,21 @@ covar <- covar[!colnames(covar) %in% opt$batch_name]
 if(opt$method == "combat") {
   suppressMessages(quant_mega <- ComBat(as.matrix(quant), batch=batch, mod=mod, prior.plots = F, ref.batch = opt$ref_batch))
   quant_mega = as.data.frame(quant_mega)
+  report_lines <- c(report_lines, "- **Method details:** Used ComBat (sva package) for batch adjustment")
 } else if(opt$method == "combat_seq") {
   invisible(capture.output(quant_mega <- ComBat_seq(as.matrix(quant), batch=batch, covar_mod=mod)))
   quant_mega = as.data.frame(quant_mega)
+  report_lines <- c(report_lines, "- **Method details:** Used ComBat_seq (sva package) for batch adjustment")
 } else {
   if(is.null(mod)) mod <- matrix(1,ncol(quant))
   quant_mega <- removeBatchEffect(as.matrix(quant), batch = batch, design = mod)
   quant_mega = as.data.frame(quant_mega)
+  report_lines <- c(report_lines, "- **Method details:** Used removeBatchEffect (limma package) for batch adjustment")
 }
+
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "✅ Batch adjustment completed successfully")
+report_lines <- c(report_lines, "")
 
 ### 2. save #####
 record = if(grepl("combat",opt$method)) 
@@ -208,17 +289,28 @@ record = if(grepl("combat",opt$method))
 loginfo1 = list(record = paste0(record, 
                                 "draw pca, density, and MDS plot before and after batch effect removal in plot dir.\n "),
                 input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                output = paste0(opt$output,"_batch_remove.RData"),
+                output = file.path(opt$outputdir, paste0(opt$output,"_batch_remove.RData")),
                 packageVersion =if(grepl("combat",opt$method)) paste("sva",packageVersion("sva")) else paste("limma",packageVersion("limma")),
                 sessionInfo = sessionInfo(),
-                srcipt = "step2_batch_adj v2.0", parameter = opt,
+                srcipt = "step2_batch_adj v2.1", parameter = opt,
                 running_time = Sys.time())
 loginfo = c(loginfo, step2_batch_adj = list(loginfo1))
 quant_raw <- quant
 quant <- quant_mega
-save(quant,covar,loginfo,covar_batch, list = otherobj, file = paste0(opt$output,"_batch_remove.RData"))
+
+# Record output files
+output_rdata <- file.path(opt$outputdir, paste0(opt$output,"_batch_remove.RData"))
+save(quant,covar,loginfo,report_file,covar_batch, list = otherobj, file = output_rdata)
+
+report_lines <- c(report_lines, "## Output Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Main output:** `", output_rdata, "`"))
+report_lines <- c(report_lines, "")
 
 ###  pvca  ########
+report_lines <- c(report_lines, "## Evaluation Plots")
+report_lines <- c(report_lines, "")
+
 if(grepl("pvca|PVCA",opt$evaluate_method)) {
   plotpdfname = "_batch_adj"
   pvcalist <- list(batch_adj_before =quant_raw,
@@ -227,15 +319,52 @@ if(grepl("pvca|PVCA",opt$evaluate_method)) {
     if(!is.null(covar_batch)) {
       cat("- Draw pvca plot - \n")
       if(ncol(covar_batch) > 0) {
-        pdf(paste0("plot/",opt$output,plotpdfname,"_pvca.pdf"),width = 12,height = 6)
+        # V2.1: Check data validity
+        valid_data <- TRUE
+        for(ii in names(pvcalist)) {
+          if(is.null(pvcalist[[ii]]) || nrow(pvcalist[[ii]]) == 0 || ncol(pvcalist[[ii]]) == 0) {
+            message(paste0("pvcadata '", ii, "' is empty, skipping."))
+            valid_data <- FALSE
+          }
+        }
+        if(valid_data) {
+        pvca_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pvca.pdf"))
+        pvca_png <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pvca.png"))
+        
+        # Save as PDF
+        pdf(pvca_pdf,width = 12,height = 6)
+        pvcaresult_list <- list()
         for(ii in names(pvcalist)) {
           suppressMessages(pvcaresult <- pvca_evaluate(pvcalist[[ii]],covar_batch, pct_threshold = 0.6,output = ii))
-          pvcalist[[ii]] <- pvcaresult$pvca_res
+          pvcaresult_list[[ii]] <- pvcaresult$pvca_res
           print(pvcaresult$pic)
         }
         dev.off()
-        save(pvcalist,file = paste0(opt$output,plotpdfname,"_PVCA.RData") )
+        
+        # Save as PNG - separate files for each plot
+        for(ii in names(pvcalist)) {
+          pvca_png_file <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pvca_",ii,".png"))
+          png(pvca_png_file,width = 1200,height = 600,res = 150)
+          suppressMessages(pvcaresult <- pvca_evaluate(pvcalist[[ii]],covar_batch, pct_threshold = 0.6,output = ii))
+          print(pvcaresult$pic)
+          dev.off()
+        }
+        
+        save(pvcaresult_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_PVCA.RData")) )
         message("pvca plot was finished.") 
+        
+        report_lines <- c(report_lines, "### PVCA Plot")
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, paste0("**Before batch adjustment:**"))
+        report_lines <- c(report_lines, paste0("![PVCA Before](plot/", opt$output, plotpdfname, "_pvca_batch_adj_before.png)"))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, paste0("**After batch adjustment:**"))
+        report_lines <- c(report_lines, paste0("![PVCA After](plot/", opt$output, plotpdfname, "_pvca_batch_adj_after.png)"))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_pvca.pdf`"))
+        report_lines <- c(report_lines, paste0("- **Data file:** `", opt$output, plotpdfname, "_PVCA.RData`"))
+        report_lines <- c(report_lines, "")
+        }  # end if(valid_data)
       }
     }
   } else  cat(" - no lme4 pcakge, not draw PVCA plot.- \n")
@@ -250,9 +379,14 @@ if(grepl("MDS|mds",opt$evaluate_method)) {
     for(i in names(MDS_list)) {
       MDS_list[[i]] <- MDS_dat(MDS_list[[i]])
     }
-    save(covar_batch,MDS_list,file = paste0(opt$output,plotpdfname,"_MDS.RData"))
+    save(covar_batch,MDS_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_MDS.RData")))
     message("MDS result was saved.")
-    pdf(paste0("plot/",opt$output,plotpdfname,"_MDSplot.pdf"), width = 10, height = 8)
+    
+    mds_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_MDSplot.pdf"))
+    mds_png <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_MDSplot.png"))
+    
+    # Save as PDF
+    pdf(mds_pdf, width = 10, height = 8)
     for(i in names(MDS_list)) {
       mdsdata <- MDS_list[[i]]
       if(!is.null(mdsdata)) {
@@ -262,7 +396,34 @@ if(grepl("MDS|mds",opt$evaluate_method)) {
       }
     }
     dev.off()
+    
+    # Save as PNG - separate files for each plot
+    for(i in names(MDS_list)) {
+      mdsdata <- MDS_list[[i]]
+      if(!is.null(mdsdata)) {
+        if(inherits(mdsdata,"list")) {
+          mds_png_file <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_MDSplot_",i,".png"))
+          png(mds_png_file, width = 1000, height = 800, res = 150)
+          MDS_plot(mdsdata, covar_batch, group=opt$batch_name,title = i)
+          dev.off()
+        } else 
+          warning(paste0(i, "step data run MDS have error."))
+      }
+    }
+    
     message("MDS plot was finished.") 
+    
+    report_lines <- c(report_lines, "### MDS Plot")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Before batch adjustment:**"))
+    report_lines <- c(report_lines, paste0("![MDS Before](plot/", opt$output, plotpdfname, "_MDSplot_batch_adj_before.png)"))
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**After batch adjustment:**"))
+    report_lines <- c(report_lines, paste0("![MDS After](plot/", opt$output, plotpdfname, "_MDSplot_batch_adj_after.png)"))
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_MDSplot.pdf`"))
+    report_lines <- c(report_lines, paste0("- **Data file:** `", opt$output, plotpdfname, "_MDS.RData`"))
+    report_lines <- c(report_lines, "")
   } else cat(" - covar is NULL, will not draw MDS plot.- \n")
 }
 ##  pca #########
@@ -276,9 +437,14 @@ if(grepl("pca|PCA",opt$evaluate_method)) {
       pca_list[[i]] <- pca_dat(pca_list[[i]])
     }
     message("PCA is calcluated.")
-    save(covar_batch,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData"))
+    save(covar_batch,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData")))
     message("pca result was saved.")
-    pdf(paste0("plot/",opt$output,plotpdfname,"_pcaplot.pdf"), width = 10, height = 8)
+    
+    pca_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pcaplot.pdf"))
+    pca_png <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pcaplot.png"))
+    
+    # Save as PDF
+    pdf(pca_pdf, width = 10, height = 8)
     for(i in names(pca_list)) {
       pcadata <- pca_list[[i]]
       if(!is.null(pcadata)) {
@@ -288,7 +454,28 @@ if(grepl("pca|PCA",opt$evaluate_method)) {
       }
     }
     dev.off()
+    
+    # Save as PNG - each plot as separate file
+    for(i in names(pca_list)) {
+      pcadata <- pca_list[[i]]
+      if(!is.null(pcadata)) {
+        if(inherits(pcadata,"prcomp")) {
+          pca_png_file <- sub("\\.png$", paste0("_",i,".png"), pca_png)
+          pca_plot_var(pcadata, covar_batch, title = i, filename = pca_png_file)
+        } else 
+          warning(paste0(i, "step data run pca have error."))
+      }
+    }
+    
     message("pca plot was finished.") 
+    
+    report_lines <- c(report_lines, "### PCA Plot")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("PCA plots saved as separate PNG files: plot/", opt$output, plotpdfname, "_pcaplot_*.png"))
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_pcaplot.pdf`"))
+    report_lines <- c(report_lines, paste0("- **Data file:** `", opt$output, plotpdfname, "_pca.RData`"))
+    report_lines <- c(report_lines, "")
   } else cat(" - covar is NULL, will not draw PCA plot.- \n")
 }
 ### boxplot&densityplot ############
@@ -304,7 +491,11 @@ if(ncol(quant) > 50) {message("Samples large than 50, random pick 50 sample to d
   quant_1 <- quant_raw
   quant_2 <- quant_mega
 }
-pdf(paste0("plot/",opt$output,"_batch_adj_sample&gene distribution.pdf"),width = width,height = 6)
+
+density_pdf <- file.path(plot_dir, paste0(opt$output,"_step2_distribution.pdf"))
+
+# Save as PDF - combined plots
+pdf(density_pdf,width = width,height = 6)
 if(opt$method == "combat_seq") 
   density_plot(log2(quant_raw+1), covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_before")) else 
     density_plot(quant_raw, covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_before"))
@@ -317,22 +508,194 @@ try(densityplot(quant_raw,"batch adj before",savefile = FALSE))
 try(densityplot(quant_mega,"batch adj after",savefile = FALSE))
 dev.off()
 
+# Save as PNG - separate files for each plot
+# 1. Density plot - before batch adjustment
+density_before_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_density_before.png"))
+if(opt$method == "combat_seq") 
+  density_plot(log2(quant_raw+1), covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_before"), filename = sub("\\.png$", "", density_before_png)) else 
+    density_plot(quant_raw, covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_before"), filename = sub("\\.png$", "", density_before_png))
+
+# 2. Density plot - after batch adjustment
+density_after_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_density_after.png"))
+if(opt$method == "combat_seq")
+  density_plot(log2(quant_mega+1), covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_after"), filename = sub("\\.png$", "", density_after_png)) else
+    density_plot(quant_mega, covar_batch, group=opt$batch_name, title = paste0(opt$output,"_batch_rm_after"), filename = sub("\\.png$", "", density_after_png))
+
+# 3. Boxplot - before batch adjustment
+boxplot_before_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_boxplot_before.png"))
+png(boxplot_before_png, width = width*100, height = 600, res = 150)
+boxplot(quant_1, main = "batch adj before data distribution in sample",ylab = "value")
+dev.off()
+
+# 4. Boxplot - after batch adjustment
+boxplot_after_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_boxplot_after.png"))
+png(boxplot_after_png, width = width*100, height = 600, res = 150)
+boxplot(quant_2, main = "batch adj after data distribution in sample",ylab = "value")
+dev.off()
+
+# 5. Density evaluation plot - before batch adjustment
+density_eval_before_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_density_eval_before.png"))
+png(density_eval_before_png, width = 12*300, height = 10*300, res = 300)
+try(densityplot(quant_raw,"batch adj before",savefile = FALSE))
+dev.off()
+
+# 6. Density evaluation plot - after batch adjustment
+density_eval_after_png <- file.path(plot_dir, paste0(opt$output,"_batch_adj_density_eval_after.png"))
+png(density_eval_after_png, width = 12*300, height = 10*300, res = 300)
+try(densityplot(quant_mega,"batch adj after",savefile = FALSE))
+dev.off()
+
+report_lines <- c(report_lines, "### Sample Distribution")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Density Distribution (Before):**")
+report_lines <- c(report_lines, paste0("![Density Before](plot/", opt$output, "_batch_adj_density_before.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Density Distribution (After):**")
+report_lines <- c(report_lines, paste0("![Density After](plot/", opt$output, "_batch_adj_density_after.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Boxplot (Before):**")
+report_lines <- c(report_lines, paste0("![Boxplot Before](plot/", opt$output, "_batch_adj_boxplot_before.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Boxplot (After):**")
+report_lines <- c(report_lines, paste0("![Boxplot After](plot/", opt$output, "_batch_adj_boxplot_after.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Density Evaluation (Before):**")
+report_lines <- c(report_lines, paste0("![Density Eval Before](plot/", opt$output, "_batch_adj_density_eval_before.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Density Evaluation (After):**")
+report_lines <- c(report_lines, paste0("![Density Eval After](plot/", opt$output, "_batch_adj_density_eval_after.png)"))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, "_step2_distribution.pdf`"))
+report_lines <- c(report_lines, "")
+
 ### BIC #######
 if(grepl("bic|BIC",opt$evaluate_method)) {
+  # V2.1: Check data validity before BIC
+  valid_bicdata <- TRUE
+  if(!exists("quant_raw") || is.null(quant_raw)) {
+    message("quant_raw is not available, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(!exists("quant_mega") || is.null(quant_mega)) {
+    message("quant_mega is not available, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(nrow(quant_raw) == 0 || ncol(quant_raw) == 0) {
+    message("quant_raw is empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(nrow(quant_mega) == 0 || ncol(quant_mega) == 0) {
+    message("quant_mega is empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(is.null(covar_batch) || nrow(covar_batch) == 0) {
+    message("covar_batch is empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  }
+  
+  if(valid_bicdata) {
   plotpdfname = "_batch_adj"
   BIClist <- list(batch_adj_before =quant_raw,
                   batch_adj_after = quant_mega)
   cat("- Draw BIC plot - \n")
-  pdf(paste0("plot/",opt$output,plotpdfname,"_bic.pdf"),width = 12,height = 6)
+    cat("Note: BIC evaluation may take a long time depending on the number of features and cores used.\n")
+  
+  bic_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_bic.pdf"))
+  
+  # Save as PDF
+  pdf(bic_pdf,width = 12,height = 6)
+  BICresult_list <- list()
   for(i in names(BIClist)) {
     BICresult <- BIC_evaluate(BIClist[[i]],covar_batch,num_cores = opt$BIC_cores,output = paste0("BIC estimation (",i,")"))
-    BIClist[[i]] <- BICresult$BICres
+    BICresult_list[[i]] <- BICresult$BICres
     print(BICresult$pic)
   }
   dev.off()
-  save(BIClist,file = paste0(opt$output,plotpdfname,"_BIC.RData") )
+  
+  # Save as PNG - separate files for each plot
+  for(i in names(BIClist)) {
+    bic_png_file <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_bic_",i,".png"))
+    png(bic_png_file,width = 1200,height = 600,res = 150)
+    BICresult <- BIC_evaluate(BIClist[[i]],covar_batch,num_cores = opt$BIC_cores,output = paste0("BIC estimation (",i,")"))
+    print(BICresult$pic)
+    dev.off()
+  }
+  
+  save(BICresult_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_BIC.RData")) )
   message("BIC plot was finished.") 
+  
+  report_lines <- c(report_lines, "### BIC Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "**Before batch adjustment:**")
+  report_lines <- c(report_lines, paste0("![BIC Before](plot/", opt$output, plotpdfname, "_bic_batch_adj_before.png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "**After batch adjustment:**")
+  report_lines <- c(report_lines, paste0("![BIC After](plot/", opt$output, plotpdfname, "_bic_batch_adj_after.png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_bic.pdf`"))
+  report_lines <- c(report_lines, paste0("- **Data file:** `", opt$output, plotpdfname, "_BIC.RData`"))
+  report_lines <- c(report_lines, "")
+  }  # end if(valid_bicdata)
 }
 
+### Generate report summary
+report_lines <- c(report_lines, "## Output Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "### Main Output File")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- `", output_rdata, "`"))
+report_lines <- c(report_lines, paste0("  - `quant`: Batch-adjusted expression matrix (", nrow(quant), " features x ", ncol(quant), " samples)"))
+report_lines <- c(report_lines, "  - `covar`: Sample covariates (without batch column)")
+report_lines <- c(report_lines, "  - `covar_batch`: Sample covariates (with batch column)")
+report_lines <- c(report_lines, "  - `loginfo`: Processing log information")
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Input Information")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Quantification file:** ", ifelse(is.na(opt$quantfile), "Using quant object", opt$quantfile)))
+report_lines <- c(report_lines, paste0("- **Covariate file:** ", ifelse(is.na(opt$covarfile), "Not provided", opt$covarfile)))
+report_lines <- c(report_lines, paste0("- **Batch variable:** ", opt$batch_name))
+report_lines <- c(report_lines, paste0("- **Batch adjustment method:** ", opt$method))
+if(!is.null(opt$ref_batch)) {
+  report_lines <- c(report_lines, paste0("- **Reference batch:** ", opt$ref_batch))
+}
+if(!is.na(opt$keepvar)) {
+  report_lines <- c(report_lines, paste0("- **Variables to keep:** ", opt$keepvar))
+}
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "### Evaluation Files")
+report_lines <- c(report_lines, "")
+if(grepl("pvca|PVCA",opt$evaluate_method) && exists("pvca_pdf")) {
+  report_lines <- c(report_lines, "- PVCA plot and data")
+}
+if(grepl("MDS|mds",opt$evaluate_method) && exists("mds_pdf")) {
+  report_lines <- c(report_lines, "- MDS plot and data")
+}
+if(grepl("pca|PCA",opt$evaluate_method) && exists("pca_pdf")) {
+  report_lines <- c(report_lines, "- PCA plot and data")
+}
+report_lines <- c(report_lines, "- Distribution plot (boxplot & density)")
+if(grepl("bic|BIC",opt$evaluate_method) && exists("bic_pdf")) {
+  report_lines <- c(report_lines, "- BIC plot and data")
+}
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Parameters Used")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Batch name:** ", opt$batch_name))
+report_lines <- c(report_lines, paste0("- **Method:** ", opt$method))
+report_lines <- c(report_lines, paste0("- **Evaluate method:** ", opt$evaluate_method))
+report_lines <- c(report_lines, paste0("- **BIC cores:** ", opt$BIC_cores))
+if(!is.null(opt$ref_batch)) {
+  report_lines <- c(report_lines, paste0("- **Reference batch:** ", opt$ref_batch))
+}
+if(!is.null(opt$keepvar)) {
+  report_lines <- c(report_lines, paste0("- **Keep variables:** ", paste(opt$keepvar, collapse = ", ")))
+}
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "---")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "*Report generated by step2_batch_adj v2.1*")
+
+# Write report file
+writeLines(report_lines, report_file)
+message("Markdown report saved to: ", report_file)
 
 cat("--- all finished ---\n")

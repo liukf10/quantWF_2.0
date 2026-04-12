@@ -1,8 +1,9 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录
 
 #log2FCcut = 1; adjPcut = 0.05; 
 #var.equal=TRUE; do_ttest = FALSE; small_size = TRUE
@@ -19,6 +20,8 @@ option_list = list(
               type='character',help="input file path, must be RData"),
   make_option("--output", action="store", default=NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default=NA,
+              type='character',help="output directory path, default is current directory"),
   make_option("--grpname", action="store", default=NA,
               type='character',help="group name in covar obj"),
   make_option("--groupA", action="store", default=NA,
@@ -42,6 +45,10 @@ if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
 }
+if(is.na(opt$outputdir)) {
+  opt$outputdir = ".";
+  message("no outputdir, setting to current directory as default")
+}
 if(is.na(opt$grpname)) {
   opt$grpname = "group"; message("Setting grpname as default: group.")}
 if(is.na(opt$log2FCcut)) {
@@ -51,6 +58,69 @@ if(is.na(opt$adjPcut)) {
 if(is.na(opt$var.equal)) {
   opt$var.equal = TRUE; message("Setting var.equal as default: TRUE.")}
 
+### Function to find previous step report ####
+find_prev_step_report <- function(input_file, outputdir) {
+  if(is.na(input_file) || !file.exists(input_file)) {
+    return(list(report_path = NULL, prev_step = NULL))
+  }
+  input_basename <- basename(input_file)
+  if(grepl("_adj(_|final|obs|hid)", input_basename)) {
+    prev_step <- "step2"
+    step_suffix <- "_step2_report"
+  } else if(grepl("_filter_|_norm_|_TMM|_quantile|_rmOut|_INT|_log_", input_basename)) {
+    prev_step <- "step1"
+    step_suffix <- "_step1_report"
+  } else {
+    prev_step <- "unknown"
+    step_suffix <- NULL
+  }
+  
+  report_path <- NULL
+  if(!is.null(step_suffix)) {
+    # First check: try to derive report name from input filename
+    # Remove common data suffixes and add report suffix
+    input_base <- sub("\\.RData$", "", input_basename)
+    
+    # Try different patterns to find the report
+    possible_reports <- c(
+      file.path(outputdir, paste0(input_base, "_report.md")),
+      file.path(outputdir, paste0(input_base, step_suffix, ".md"))
+    )
+    
+    # Also try to find any report file with step suffix in outputdir
+    if(dir.exists(outputdir)) {
+      all_files <- list.files(outputdir, pattern = paste0(step_suffix, "\\.md$"), full.names = TRUE)
+      if(length(all_files) > 0) {
+        # Sort by modification time and take the most recent
+        file_info <- file.info(all_files)
+        most_recent <- all_files[which.max(file_info$mtime)]
+        possible_reports <- c(possible_reports, most_recent)
+      }
+    }
+    
+    # Find the first existing report
+    for(report_candidate in possible_reports) {
+      if(file.exists(report_candidate)) {
+        report_path <- report_candidate
+        break
+      }
+    }
+  }
+  
+  return(list(report_path = report_path, prev_step = prev_step))
+}
+
+### Initialize Report ####
+# Load preprocess_func.R for report utility functions
+funcpath <- "preprocess_func.R"
+if(file.exists(funcpath)) {
+  source(funcpath)
+  report_funcs_available <- TRUE
+} else {
+  report_funcs_available <- FALSE
+  warning("preprocess_func.R not found. Report generation will be skipped.")
+}
+
 if(!is.na(opt$input)) {
   if(grepl("\\.RData$",opt$input)) {
     if(file.exists(opt$input)) 
@@ -58,6 +128,16 @@ if(!is.na(opt$input)) {
         stop(paste0("No ",opt$input," file."))
   } else stop("input should be .RData format file.")
 }
+
+# Find previous step report
+prev_report_info <- find_prev_step_report(opt$input, opt$outputdir)
+prev_report_file <- prev_report_info$report_path
+prev_step <- prev_report_info$prev_step
+
+if(!is.null(prev_report_file)) {
+  message(paste0("Found ", prev_step, " report: ", prev_report_file))
+}
+
 if(!"quant" %in% ls()) 
   stop ("no quant object, see help info.");
 if(!"covar" %in% ls()) stop("No covar, see help info.");
@@ -65,6 +145,71 @@ otherobj <- ls();
 otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"loginfo" %in% ls()) loginfo = list();
+
+### Initialize Report ####
+# V2.1 revised: Initialize Markdown report after loading data
+if(report_funcs_available && exists("check_existing_report")) {
+  # Check if input has report_file object (inherited from previous step)
+  loaded_report_file <- if("report_file" %in% otherobj) report_file else NULL
+  
+  # Check for existing report with step3-specific naming
+  report_info <- check_existing_report(
+    outputdir = opt$outputdir, 
+    quantfile = opt$input, 
+    output = opt$output,
+    step_suffix = "step3",
+    loaded_report_file = loaded_report_file,
+    inherit_report = TRUE
+  )
+  
+  # Copy report from previous step if needed (different output name)
+  if (report_info$inherited) {
+    copy_report_if_needed(report_info)
+    report_append <- TRUE
+  } else {
+    report_append <- report_info$append
+  }
+  
+  report_file <- report_info$report_file
+  
+  # Initialize new report or append section to existing report
+  if (!report_append) {
+    init_report(opt$outputdir, opt$output, "Step 3: Differential Expression Analysis", append = FALSE, step_suffix = "step3")
+    
+    # Write executed code
+    cmd_line <- paste(commandArgs(trailingOnly = TRUE), collapse = " ")
+    code_block <- sprintf("Rscript step3_DEG_classic_cmd %s", cmd_line)
+    write_executed_code(report_file, code_block, type = "bash")
+    write_parameters(report_file, opt)
+    
+    # Add previous step report link
+    if(!is.null(prev_report_file) && !is.null(prev_step)) {
+      cat("\n### Linked Report\n\n", file = report_file, append = TRUE)
+      cat("**Previous Step:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")\n\n", file = report_file, append = TRUE)
+    }
+  } else {
+    # Same output, just add a new run section
+    cat("\n---\n\n", file = report_file, append = TRUE)
+    cat("## Step 3: Differential Expression Analysis (Additional Run)\n\n", file = report_file, append = TRUE)
+    cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+    
+    # Write executed code for this run
+    cmd_line <- paste(commandArgs(trailingOnly = TRUE), collapse = " ")
+    code_block <- sprintf("Rscript step3_DEG_classic_cmd %s", cmd_line)
+    write_executed_code(report_file, code_block, type = "bash")
+    write_parameters(report_file, opt)
+    
+    # Add previous step report link
+    if(!is.null(prev_report_file) && !is.null(prev_step)) {
+      cat("\n### Linked Report\n\n", file = report_file, append = TRUE)
+      cat("**Previous Step:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")\n\n", file = report_file, append = TRUE)
+    }
+  }
+  report_initialized <- TRUE
+} else {
+  report_initialized <- FALSE
+  report_file <- NULL
+}
 
 ### covar check #############
 if(!is.null(covar)) {
@@ -257,30 +402,315 @@ loginfo1 = list(record = paste0(record,
                                 record2, "is compared.\n ",
                                 recordnum),
                 input = opt$input,
-                output = paste0(opt$output,"_diffstat_classic.RData"),
+                output = file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData")),
                 sessionInfo = sessionInfo(),
                 srcipt = "step3_DEG_classic v2.0", parameter = opt,
                 running_time = Sys.time())
 loginfo = c(loginfo, DEG_classic = list(loginfo1))
 
 if(small_size) {
-  save(ttest_result,loginfo,file = paste0(opt$output,"_DEG_classic.RData"))
-  save(ttest_result_all,loginfo,
-       file = paste0(opt$output,"_diffstat_classic.RData"))
+  save(ttest_result,loginfo,report_file,file = file.path(opt$outputdir, paste0(opt$output,"_DEG_classic.RData")))
+  save(ttest_result_all,loginfo,report_file,
+       file = file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData")))
   cat("--Finish DEG analysis--\n")
 } else {
   if(opt$do_ttest) {
-    save(ttest_result,wilcox_result,loginfo,
-         file = paste0(opt$output,"_DEG_classic.RData"))
-    save(ttest_result_all,wilcox_result_all,loginfo,
-         file = paste0(opt$output,"_diffstat_classic.RData"))
+    save(ttest_result,wilcox_result,loginfo,report_file,
+         file = file.path(opt$outputdir, paste0(opt$output,"_DEG_classic.RData")))
+    save(ttest_result_all,wilcox_result_all,loginfo,report_file,
+         file = file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData")))
     cat("--Finish DEG analysis, do t test and wilcoxon test--\n")
   } else {
-    save(wilcox_result,loginfo,
-         file = paste0(opt$output,"_DEG_classic.RData"))
-    save(wilcox_result_all,loginfo,
-         file = paste0(opt$output,"_diffstat_classic.RData"))
+    save(wilcox_result,loginfo,report_file,
+         file = file.path(opt$outputdir, paste0(opt$output,"_DEG_classic.RData")))
+    save(wilcox_result_all,loginfo,report_file,
+         file = file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData")))
     cat("--Finish DEG analysis, only do wilcoxon test--\n")
   }
 }
-cat("--- saved in ",opt$output,"_DEG_classic.RData and ",opt$output,"_diffstat_classic.RData ---\n",sep = "")
+cat("--- saved in ",file.path(opt$outputdir, paste0(opt$output,"_DEG_classic.RData"))," and ",file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData"))," ---\n",sep = "")
+
+### Generate Plots and Update Report ####
+# Create plot directory
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+
+# Load required libraries for plotting
+if(!requireNamespace("ggplot2", quietly = TRUE)) {
+  message("ggplot2 not available, skipping plot generation.")
+  generate_plots <- FALSE
+} else {
+  library(ggplot2)
+  library(ggrepel)
+  generate_plots <- TRUE
+}
+
+# Function to save plots as both PDF and PNG
+save_plot_both <- function(plot, filename_base, width = 8, height = 6, dpi = 300) {
+  pdf_file <- file.path(plot_dir, paste0(filename_base, ".pdf"))
+  png_file <- file.path(plot_dir, paste0(filename_base, ".png"))
+  
+  # Save as PDF
+  pdf(pdf_file, width = width, height = height)
+  print(plot)
+  dev.off()
+  
+  # Save as PNG
+  png(png_file, width = width * dpi, height = height * dpi, res = dpi)
+  print(plot)
+  dev.off()
+  
+  return(list(pdf = pdf_file, png = png_file))
+}
+
+# Function to create volcano plot
+create_volcano_plot <- function(result, comp_name, log2FCcut, adjPcut) {
+  result$significance <- "Not Sig"
+  result$significance[result$log2FC > log2FCcut & result$p.adj < adjPcut] <- "Up"
+  result$significance[result$log2FC < -log2FCcut & result$p.adj < adjPcut] <- "Down"
+  result$significance <- factor(result$significance, levels = c("Up", "Down", "Not Sig"))
+  
+  # Calculate y-axis limit
+  y_max <- max(-log10(result$p.adj[!is.na(result$p.adj) & result$p.adj > 0]), na.rm = TRUE)
+  y_limit <- min(y_max * 1.1, 300)  # Cap at 300 for visibility
+  
+  p <- ggplot(result, aes(x = log2FC, y = -log10(p.adj), color = significance)) +
+    geom_point(alpha = 0.6, size = 1.5) +
+    scale_color_manual(values = c("Up" = "#E41A1C", "Down" = "#377EB8", "Not Sig" = "grey50"),
+                       labels = c("Up" = paste0("Up (", sum(result$significance == "Up", na.rm = TRUE), ")"),
+                                  "Down" = paste0("Down (", sum(result$significance == "Down", na.rm = TRUE), ")"),
+                                  "Not Sig" = "Not Significant")) +
+    geom_vline(xintercept = c(-log2FCcut, log2FCcut), linetype = "dashed", color = "grey40") +
+    geom_hline(yintercept = -log10(adjPcut), linetype = "dashed", color = "grey40") +
+    coord_cartesian(ylim = c(0, y_limit)) +
+    labs(title = paste0("Volcano Plot: ", comp_name),
+         subtitle = paste0("log2FC cutoff: ", log2FCcut, ", adj.P cutoff: ", adjPcut),
+         x = "Log2 Fold Change",
+         y = "-Log10 Adjusted P-value",
+         color = "Significance") +
+    theme_bw() +
+    theme(legend.position = "right",
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5, size = 10))
+  
+  return(p)
+}
+
+# Function to create MA plot
+create_ma_plot <- function(result, comp_name, log2FCcut, adjPcut) {
+  result$meanExpr <- rowMeans(quant[match(result$SYMBOL, rownames(quant)), ], na.rm = TRUE)
+  result$significance <- "Not Sig"
+  result$significance[result$log2FC > log2FCcut & result$p.adj < adjPcut] <- "Up"
+  result$significance[result$log2FC < -log2FCcut & result$p.adj < adjPcut] <- "Down"
+  result$significance <- factor(result$significance, levels = c("Up", "Down", "Not Sig"))
+  
+  p <- ggplot(result, aes(x = log2(meanExpr + 1), y = log2FC, color = significance)) +
+    geom_point(alpha = 0.6, size = 1.5) +
+    scale_color_manual(values = c("Up" = "#E41A1C", "Down" = "#377EB8", "Not Sig" = "grey50"),
+                       labels = c("Up" = paste0("Up (", sum(result$significance == "Up", na.rm = TRUE), ")"),
+                                  "Down" = paste0("Down (", sum(result$significance == "Down", na.rm = TRUE), ")"),
+                                  "Not Sig" = "Not Significant")) +
+    geom_hline(yintercept = c(-log2FCcut, log2FCcut), linetype = "dashed", color = "grey40") +
+    labs(title = paste0("MA Plot: ", comp_name),
+         subtitle = paste0("log2FC cutoff: ", log2FCcut, ", adj.P cutoff: ", adjPcut),
+         x = "Log2 Mean Expression",
+         y = "Log2 Fold Change",
+         color = "Significance") +
+    theme_bw() +
+    theme(legend.position = "right",
+          plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+          plot.subtitle = element_text(hjust = 0.5, size = 10))
+  
+  return(p)
+}
+
+# Generate plots and collect plot info for report
+plot_list <- list()
+
+if(generate_plots) {
+  message("\n--- Generating plots ---")
+  
+  if(small_size) {
+    # Only t-test results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      result <- ttest_result_all[[i]]
+      
+      # Volcano plot
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      volc_plot <- create_volcano_plot(result, comp_name, opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(volc_plot, paste0(opt$output, "_volcano_", safe_name), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_volcano")]] <- plot_files$png
+      message(paste0("  Volcano plot saved: ", basename(plot_files$png)))
+      
+      # MA plot
+      ma_plot <- create_ma_plot(result, comp_name, opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(ma_plot, paste0(opt$output, "_ma_", safe_name), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_ma")]] <- plot_files$png
+      message(paste0("  MA plot saved: ", basename(plot_files$png)))
+    }
+  } else if(opt$do_ttest) {
+    # Both t-test and wilcoxon results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      
+      # T-test volcano
+      result_t <- ttest_result_all[[i]]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      volc_plot_t <- create_volcano_plot(result_t, paste0(comp_name, " (t-test)"), opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(volc_plot_t, paste0(opt$output, "_volcano_", safe_name, "_ttest"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_volcano_ttest")]] <- plot_files$png
+      message(paste0("  Volcano plot (t-test) saved: ", basename(plot_files$png)))
+      
+      # T-test MA plot
+      ma_plot_t <- create_ma_plot(result_t, paste0(comp_name, " (t-test)"), opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(ma_plot_t, paste0(opt$output, "_ma_", safe_name, "_ttest"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_ma_ttest")]] <- plot_files$png
+      message(paste0("  MA plot (t-test) saved: ", basename(plot_files$png)))
+      
+      # Wilcoxon volcano
+      result_w <- wilcox_result_all[[i]]
+      volc_plot_w <- create_volcano_plot(result_w, paste0(comp_name, " (Wilcoxon)"), opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(volc_plot_w, paste0(opt$output, "_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_volcano_wilcox")]] <- plot_files$png
+      message(paste0("  Volcano plot (Wilcoxon) saved: ", basename(plot_files$png)))
+      
+      # Wilcoxon MA plot
+      ma_plot_w <- create_ma_plot(result_w, paste0(comp_name, " (Wilcoxon)"), opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(ma_plot_w, paste0(opt$output, "_ma_", safe_name, "_wilcox"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_ma_wilcox")]] <- plot_files$png
+      message(paste0("  MA plot (Wilcoxon) saved: ", basename(plot_files$png)))
+    }
+  } else {
+    # Only wilcoxon results
+    for(i in seq_along(wilcox_result_all)) {
+      comp_name <- names(wilcox_result_all)[i]
+      result <- wilcox_result_all[[i]]
+      
+      # Volcano plot
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      volc_plot <- create_volcano_plot(result, comp_name, opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(volc_plot, paste0(opt$output, "_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_volcano")]] <- plot_files$png
+      message(paste0("  Volcano plot saved: ", basename(plot_files$png)))
+      
+      # MA plot
+      ma_plot <- create_ma_plot(result, comp_name, opt$log2FCcut, opt$adjPcut)
+      plot_files <- save_plot_both(ma_plot, paste0(opt$output, "_ma_", safe_name, "_wilcox"), width = 10, height = 8)
+      plot_list[[paste0(comp_name, "_ma")]] <- plot_files$png
+      message(paste0("  MA plot saved: ", basename(plot_files$png)))
+    }
+  }
+  message("--- Plot generation completed ---\n")
+}
+
+### Write Report Summary ####
+if(report_initialized) {
+  cat("### Analysis Results\n\n", file = report_file, append = TRUE)
+  
+  # Statistics summary
+  cat("#### DEG Statistics\n\n", file = report_file, append = TRUE)
+  cat("| Comparison | Test | Total DEGs | Up-regulated | Down-regulated |\n", file = report_file, append = TRUE)
+  cat("|------------|------|------------|--------------|----------------|\n", file = report_file, append = TRUE)
+  
+  if(small_size) {
+    # Only t-test results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      result <- ttest_result_all[[i]]
+      up_count <- sum(result$log2FC > opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
+      down_count <- sum(result$log2FC < -opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
+      total_count <- up_count + down_count
+      test_type <- if(opt$var.equal) "Student t-test" else "Welch t-test"
+      cat(sprintf("| %s | %s | %d | %d | %d |\n", comp_name, test_type, total_count, up_count, down_count), file = report_file, append = TRUE)
+    }
+  } else if(opt$do_ttest) {
+    # Both t-test and wilcoxon results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      result_t <- ttest_result_all[[i]]
+      up_count_t <- sum(result_t$log2FC > opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
+      down_count_t <- sum(result_t$log2FC < -opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
+      total_count_t <- up_count_t + down_count_t
+      t_type <- if(opt$var.equal) "Student t-test" else "Welch t-test"
+      cat(sprintf("| %s (t-test) | %s | %d | %d | %d |\n", comp_name, t_type, total_count_t, up_count_t, down_count_t), file = report_file, append = TRUE)
+      
+      result_w <- wilcox_result_all[[i]]
+      up_count_w <- sum(result_w$log2FC > opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
+      down_count_w <- sum(result_w$log2FC < -opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
+      total_count_w <- up_count_w + down_count_w
+      cat(sprintf("| %s (Wilcoxon) | Wilcoxon | %d | %d | %d |\n", comp_name, total_count_w, up_count_w, down_count_w), file = report_file, append = TRUE)
+    }
+  } else {
+    # Only wilcoxon results
+    for(i in seq_along(wilcox_result_all)) {
+      comp_name <- names(wilcox_result_all)[i]
+      result <- wilcox_result_all[[i]]
+      up_count <- sum(result$log2FC > opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
+      down_count <- sum(result$log2FC < -opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
+      total_count <- up_count + down_count
+      cat(sprintf("| %s | Wilcoxon | %d | %d | %d |\n", comp_name, total_count, up_count, down_count), file = report_file, append = TRUE)
+    }
+  }
+  cat("\n", file = report_file, append = TRUE)
+  
+  # Parameters used
+  cat("**Analysis Parameters**:\n\n", file = report_file, append = TRUE)
+  cat(sprintf("- Log2 Fold Change cutoff: %s\n", opt$log2FCcut), file = report_file, append = TRUE)
+  cat(sprintf("- Adjusted p-value cutoff: %s\n", opt$adjPcut), file = report_file, append = TRUE)
+  cat(sprintf("- Group variable: %s\n", opt$grpname), file = report_file, append = TRUE)
+  cat(sprintf("- Group A: %s\n", paste(opt$groupA, collapse = ", ")), file = report_file, append = TRUE)
+  cat(sprintf("- Group B: %s\n\n", paste(opt$groupB, collapse = ", ")), file = report_file, append = TRUE)
+  
+  # Plots section
+  if(generate_plots && length(plot_list) > 0) {
+    cat("#### Visualization\n\n", file = report_file, append = TRUE)
+    cat("Generated plots (both PDF and PNG formats):\n\n", file = report_file, append = TRUE)
+    
+    if(small_size) {
+      for(i in seq_along(ttest_result_all)) {
+        comp_name <- names(ttest_result_all)[i]
+        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+        cat(sprintf("**%s (t-test)**\n\n", comp_name), file = report_file, append = TRUE)
+        cat(sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        cat(sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+      }
+    } else if(opt$do_ttest) {
+      for(i in seq_along(ttest_result_all)) {
+        comp_name <- names(ttest_result_all)[i]
+        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+        cat(sprintf("**%s**\n\n", comp_name), file = report_file, append = TRUE)
+        cat(sprintf("- Volcano Plot (t-test):\n  ![Volcano](plot/%s_volcano_%s_ttest.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        cat(sprintf("- MA Plot (t-test):\n  ![MA Plot](plot/%s_ma_%s_ttest.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        cat(sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        cat(sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+      }
+    } else {
+      for(i in seq_along(wilcox_result_all)) {
+        comp_name <- names(wilcox_result_all)[i]
+        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+        cat(sprintf("**%s (Wilcoxon)**\n\n", comp_name), file = report_file, append = TRUE)
+        cat(sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        cat(sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+      }
+    }
+  }
+  
+  # Loginfo
+  cat("#### Processing Log\n\n", file = report_file, append = TRUE)
+  cat("```\n", file = report_file, append = TRUE)
+  cat(loginfo1$record, file = report_file, append = TRUE)
+  cat("\n```\n\n", file = report_file, append = TRUE)
+  
+  # Generated files
+  cat("#### Generated Files\n\n", file = report_file, append = TRUE)
+  cat(sprintf("- **DEG result file**: `%s`\n", paste0(opt$output, "_DEG_classic.RData")), file = report_file, append = TRUE)
+  cat(sprintf("  - Contains filtered DEG results (|log2FC| > %s & adj.P < %s)\n", opt$log2FCcut, opt$adjPcut), file = report_file, append = TRUE)
+  cat(sprintf("- **Statistics file**: `%s`\n", paste0(opt$output, "_diffstat_classic.RData")), file = report_file, append = TRUE)
+  cat("  - Contains complete statistical results for all features\n", file = report_file, append = TRUE)
+  cat(sprintf("- **Plot directory**: `plot/`\n"), file = report_file, append = TRUE)
+  cat("  - Contains volcano plots and MA plots (PDF and PNG formats)\n", file = report_file, append = TRUE)
+  cat(sprintf("- **Report file**: `%s`\n\n", paste0(opt$output, "_report.md")), file = report_file, append = TRUE)
+  
+  cat("Analysis completed at: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n", file = report_file, append = TRUE)
+}

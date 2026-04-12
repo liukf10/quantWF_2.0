@@ -1,8 +1,9 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 25, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录
 
 #input \t seperate
 ### package check ########
@@ -20,17 +21,23 @@ if(!"covarfile" %in% allobj)
   covarfile = NA;
 if(!"output" %in% allobj) 
   output = NA;
+if(!"outputdir" %in% allobj) 
+  outputdir = NA;
 if(!"IDinfCol" %in% allobj) 
   IDinfCol = NA;
 if(!"NAvalue" %in% allobj)
   NAvalue = NA
 
 opt = list(quantfile = quantfile, covarfile = covarfile, output = output,
-           IDinfCol = IDinfCol, NAvalue =NAvalue)
+           outputdir = outputdir, IDinfCol = IDinfCol, NAvalue =NAvalue)
 rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","quant","loginfo","existpck","funcpath")
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0.1 parameters evaluate ######
+if(is.na(opt$outputdir)) {
+  opt$outputdir = "."
+  message("no outputdir, setting to '.' (current dir)")
+}
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
@@ -41,12 +48,30 @@ if(all(is.na(opt$IDinfCol))) {
   message("no IDinfCol, it will put all col without intensity into IDinf.")
 } else {
   saveother = FALSE
+  # Convert to character first to handle both numeric and character input
+  opt$IDinfCol <- as.character(opt$IDinfCol)
   opt$IDinfCol <- unlist(strsplit(opt$IDinfCol,","));
   if(!any(is.na(as.numeric(opt$IDinfCol)))) opt$IDinfCol <- as.numeric(opt$IDinfCol)
 }
 if(is.na(opt$NAvalue)) {
   message("NAvalue setting to NA.")
 }
+
+# V2.1: 创建输出目录
+if(!dir.exists(opt$outputdir)) dir.create(opt$outputdir, recursive = TRUE)
+
+# V2.1: 创建plot目录
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+
+# V2.1: 初始化Markdown报告
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step0_report.md"))
+
+# 写入Markdown报告头部
+cat(paste0("# Step 0: MS Data Extraction Report\n\n"), file = report_file)
+cat(paste0("**Date:** ", Sys.time(), "\n\n"), file = report_file, append = TRUE)
+cat(paste0("**Output Prefix:** ", opt$output, "\n\n"), file = report_file, append = TRUE)
+cat(paste0("**Output Directory:** ", opt$outputdir, "\n\n"), file = report_file, append = TRUE)
 
 ### 0.2 read quant & covar info ####
 #no quantfile will stop
@@ -130,9 +155,11 @@ if(sum(duplicated(IDinf$ID)) > 0) {
 }
 rownames(quant) <- IDinf$ID
 
+n1 = ncol(quant); nr1 <- nrow(quant);
+
 loginfo1 = list(record = paste0("Extract the MS data.\n"),
                 input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                output = paste0(opt$output,"_raw.RData"),
+                output = file.path(opt$outputdir, paste0(opt$output,"_raw.RData")),
                 packageVersion =paste("data.table",packageVersion("data.table")),
                 sessionInfo = sessionInfo(),
                 srcipt = "step0_MS v2.0", parameter = opt,
@@ -140,9 +167,74 @@ loginfo1 = list(record = paste0("Extract the MS data.\n"),
 loginfo = c(loginfo, data_extract = list(loginfo1))
 
 if(is.null(other)) 
-  save(IDinf,quant,loginfo,list=otherobj, file = paste0(opt$output,"_raw.RData")) else
-    save(IDinf,quant,other,loginfo,list=otherobj, file = paste0(opt$output,"_raw.RData"))
+  save(IDinf,quant,loginfo,list=otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_raw.RData"))) else
+    save(IDinf,quant,other,loginfo,list=otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_raw.RData")))
 
 cat('---rawdata is extracted--- \n')
-n1 = ncol(quant); nr1 <- nrow(quant);
 cat(paste0("raw data have ", n1, " sample X ", nr1," rows \n"))
+
+# V2.1: 写入Markdown报告内容
+cat("## Input Information\n\n", file = report_file, append = TRUE)
+cat(paste0("- Quantification file: ", opt$quantfile, "\n"), file = report_file, append = TRUE)
+if(!is.na(opt$covarfile)) {
+  cat(paste0("- Covariate file: ", opt$covarfile, "\n"), file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+cat("## Data Summary\n\n", file = report_file, append = TRUE)
+cat(paste0("- Number of features: ", nr1, "\n"), file = report_file, append = TRUE)
+cat(paste0("- Number of samples: ", n1, "\n"), file = report_file, append = TRUE)
+cat(paste0("- ID column used: ", colnames(inf)[1], "\n"), file = report_file, append = TRUE)
+if(!is.na(opt$NAvalue)) {
+  cat(paste0("- Missing value indicator: ", opt$NAvalue, "\n"), file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+### V2.1: 生成样本分布图 ######
+cat("- Generating sample distribution plots -\n")
+
+# 准备绘图数据（随机选取最多50个样本）
+if(ncol(quant) > 50) {
+  pos <- sample(1:ncol(quant), 50)
+  quant_plot <- log2(intensity[,pos])
+  width <- ceiling(50/5)
+} else {
+  quant_plot <- log2(intensity)
+  width <- 10
+}
+
+# PDF输出
+pdf(file.path(plot_dir, paste0(opt$output, "_sample_distribution.pdf")), width = width, height = 6)
+boxplot(quant_plot, main = "Raw Intensity Distribution by Sample", 
+        ylab = "Log2 Intensity", las = 2, cex.axis = 0.7)
+dev.off()
+
+# PNG输出
+png(file.path(plot_dir, paste0(opt$output, "_sample_distribution.png")), 
+    width = width * 300, height = 6 * 300, res = 300)
+boxplot(quant_plot, main = "Raw Intensity Distribution by Sample", 
+        ylab = "Log2 Intensity", las = 2, cex.axis = 0.7)
+dev.off()
+
+cat("---sample distribution plots generated---\n")
+
+# V2.1: 在Markdown报告中添加图片引用
+cat("## Plots\n\n", file = report_file, append = TRUE)
+cat("### Sample Distribution Plot\n\n", file = report_file, append = TRUE)
+cat(paste0("![Sample Distribution](plot/", opt$output, "_sample_distribution.png)\n\n"), file = report_file, append = TRUE)
+
+# V2.1: 输出文件信息
+cat("## Output Files\n\n", file = report_file, append = TRUE)
+cat(paste0("- Main output: ", opt$output, "_raw.RData\n"), file = report_file, append = TRUE)
+cat(paste0("- Report file: ", opt$output, "_step0_report.md\n"), file = report_file, append = TRUE)
+cat(paste0("- PDF plot: plot/", opt$output, "_sample_distribution.pdf\n"), file = report_file, append = TRUE)
+cat(paste0("- PNG plot: plot/", opt$output, "_sample_distribution.png\n"), file = report_file, append = TRUE)
+cat("\n", file = report_file, append = TRUE)
+
+cat("## Processing Log\n\n", file = report_file, append = TRUE)
+cat("```\n", file = report_file, append = TRUE)
+cat(paste0("Raw data extraction completed.\n"), file = report_file, append = TRUE)
+cat(paste0("Samples: ", n1, " | Features: ", nr1, "\n"), file = report_file, append = TRUE)
+cat("```\n\n", file = report_file, append = TRUE)
+
+cat("--- Step 0: MS Data Extraction finished ---\n")

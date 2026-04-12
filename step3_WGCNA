@@ -1,9 +1,10 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
 #250720 add networkType and TOMType parameter
+#V2.1: 添加outputdir参数支持指定输出目录
 
 ###0.package check ########
 existpck <- rownames(installed.packages());
@@ -20,6 +21,8 @@ if(!"input" %in% allobj)
   input = NA;
 if(!"output" %in% allobj) 
   output = NA;
+if(!"outputdir" %in% allobj) 
+  outputdir = NA;
 if(!"funcdir" %in% allobj) 
   funcdir = NA;
 if(!"onlytune" %in% allobj) onlytune = NA; 
@@ -36,7 +39,8 @@ if(!"networkType" %in% allobj) networkType = NA;
 if(!"TOMType" %in% allobj) TOMType = NA;
 
 opt = list(input= input,
-           output = output, 
+           output = output,
+           outputdir = outputdir,
            funcdir = funcdir,
            onlytune = onlytune,
            power = power,
@@ -54,7 +58,13 @@ rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","loginfo","existpck
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0. parameters evaluate ######
-if(!dir.exists("plot")) dir.create("plot")
+if(is.na(opt$outputdir)) {
+  opt$outputdir = ".";
+  message("no outputdir, setting to '.' as current directory")
+}
+#V2.1: 使用outputdir参数创建plot目录
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
 if(is.na(opt$input)) {
   if("quant" %in% ls()) {
     message("using quant obj to do the process.")
@@ -131,9 +141,198 @@ otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"wgcnadata" %in% ls()) wgcnadata = t(quant);
 
+### Find Previous Step Report ####
+# Function to determine input source (step1 or step2) based on filename and find corresponding report
+find_prev_step_report <- function(input_file, outputdir, report_info = NULL) {
+  if(is.na(input_file) || !file.exists(input_file)) {
+    if(!is.null(report_info)) {
+      report_info$prev_report_search <- "Input file not provided or does not exist"
+    }
+    return(list(report_path = NULL, prev_step = NULL, report_info = report_info))
+  }
+  
+  # Determine source step based on filename patterns
+  input_basename <- basename(input_file)
+  if(grepl("_adj(_|final|obs|hid)", input_basename)) {
+    prev_step <- "step2"
+    step_suffix <- "_step2_report"
+  } else if(grepl("_filter_|_norm_|_TMM|_quantile|_rmOut|_INT|_log_", input_basename)) {
+    prev_step <- "step1"
+    step_suffix <- "_step1_report"
+  } else {
+    # Default: try both
+    prev_step <- "unknown"
+    step_suffix <- NULL
+  }
+  
+  # Extract base name from input file
+  base_name <- sub("\\.RData$", "", basename(input_file))
+  # Remove common step1/step2 suffixes to find original prefix
+  base_name_alt <- sub("(_filter.*|_norm.*|_TMM.*|_quantile.*|_rmOut.*|_INT.*|_log.*|_adj.*|_step[12].*)", "", base_name)
+  
+  # Possible report file patterns
+  if(!is.null(step_suffix)) {
+    possible_reports <- c(
+      file.path(outputdir, paste0(base_name, step_suffix, ".md")),
+      file.path(outputdir, paste0(base_name_alt, step_suffix, ".md")),
+      file.path(dirname(input_file), paste0(base_name, step_suffix, ".md")),
+      file.path(dirname(input_file), paste0(base_name_alt, step_suffix, ".md"))
+    )
+  } else {
+    # Try both step1 and step2 patterns
+    possible_reports <- c(
+      file.path(outputdir, paste0(base_name, "_step2_report.md")),
+      file.path(outputdir, paste0(base_name, "_step1_report.md")),
+      file.path(outputdir, paste0(base_name_alt, "_step2_report.md")),
+      file.path(outputdir, paste0(base_name_alt, "_step1_report.md")),
+      file.path(dirname(input_file), paste0(base_name, "_step2_report.md")),
+      file.path(dirname(input_file), paste0(base_name, "_step1_report.md")),
+      file.path(dirname(input_file), paste0(base_name_alt, "_step2_report.md")),
+      file.path(dirname(input_file), paste0(base_name_alt, "_step1_report.md"))
+    )
+  }
+  
+  # Remove duplicates
+  possible_reports <- unique(possible_reports)
+  
+  # Record search info
+  search_info <- paste0("Detected input source: ", ifelse(prev_step == "unknown", "Unknown (trying both step1 and step2)", paste0("**", prev_step, "**")), "\n\n")
+  search_info <- paste0(search_info, "Input file: `", input_file, "`\n\n")
+  search_info <- paste0(search_info, "Base names tried: `", base_name, "`, `", base_name_alt, "`\n\n")
+  search_info <- paste0(search_info, "Possible report paths checked:\n")
+  
+  for(report_path in possible_reports) {
+    exists_flag <- file.exists(report_path)
+    status_symbol <- ifelse(exists_flag, "✓ Found", "✗ Not found")
+    search_info <- paste0(search_info, "- `", report_path, "` ", status_symbol, "\n")
+    if(exists_flag) {
+      message("Found previous step report: ", report_path)
+      # Update prev_step based on found report
+      if(grepl("step2", report_path)) prev_step <- "step2"
+      else if(grepl("step1", report_path)) prev_step <- "step1"
+      if(!is.null(report_info)) {
+        report_info$prev_report_search <- search_info
+        report_info$prev_report_found <- report_path
+        report_info$prev_step <- prev_step
+      }
+      return(list(report_path = report_path, prev_step = prev_step, report_info = report_info))
+    }
+  }
+  
+  message("No previous step report found for: ", input_file)
+  if(!is.null(report_info)) {
+    report_info$prev_report_search <- search_info
+    report_info$prev_report_found <- NULL
+    report_info$prev_step <- prev_step
+  }
+  return(list(report_path = NULL, prev_step = prev_step, report_info = report_info))
+}
+
+# Initialize report info
+report_info <- list()
+
+# Look for previous step report
+prev_report_file <- NULL
+prev_step <- NULL
+if(!is.na(opt$input)) {
+  message("Looking for previous step report based on input: ", opt$input)
+  find_result <- find_prev_step_report(opt$input, opt$outputdir, report_info)
+  prev_report_file <- find_result$report_path
+  prev_step <- find_result$prev_step
+  report_info <- find_result$report_info
+  if(!is.null(prev_report_file)) {
+    message("Found ", prev_step, " report at: ", prev_report_file)
+  }
+} else {
+  report_info$prev_report_search <- "No input file provided, cannot search for previous step report"
+  report_info$prev_report_found <- NULL
+  report_info$prev_step <- NULL
+}
+
+### Markdown Report initialization ######
+# V2.1 revised: Initialize Markdown report after loading data
+# Determine report file name (keep existing WGCNA naming)
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_WGCNA_report.md"))
+
+# Check if input data has report_file object (from previous step)
+loaded_report_file <- NULL
+if("report_file" %in% otherobj) {
+  if(exists("report_file")) {
+    loaded_report_file <- report_file
+  }
+}
+
+# Check if target report already exists
+report_append <- file.exists(report_file)
+
+# If no target report but have loaded report from different output, copy it
+if(!report_append && !is.null(loaded_report_file) && file.exists(loaded_report_file)) {
+  if(normalizePath(loaded_report_file, mustWork = FALSE) != normalizePath(report_file, mustWork = FALSE)) {
+    file.copy(loaded_report_file, report_file, overwrite = TRUE)
+    report_append <- TRUE
+  }
+}
+
+write_report <- function(content, append = TRUE) {
+  cat(content, file = report_file, append = append)
+}
+
+if(!report_append) {
+  # Create new Markdown report
+  write_report(paste0("# Step 3: WGCNA Analysis Report\n\n"), append = FALSE)
+  
+  # Add link to previous step report if found
+  if(!is.null(prev_report_file) && !is.null(prev_step)) {
+    write_report(paste0("**Previous Step Report:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")\n\n"))
+  }
+  
+  write_report(paste0("**Input File:** ", ifelse(is.na(opt$input), "Not specified", opt$input), "\n\n"))
+  write_report(paste0("**Date:** ", Sys.time(), "\n\n"))
+  write_report(paste0("**Output:** ", opt$output, "\n\n"))
+  write_report(paste0("**Output Directory:** ", opt$outputdir, "\n\n"))
+  write_report(paste0("---\n\n"))
+  write_report(paste0("## Parameters\n\n"))
+  write_report(paste0("| Parameter | Value |\n"))
+  write_report(paste0("|-----------|-------|\n"))
+  write_report(paste0("| Power | ", ifelse(is.na(opt$power), "Auto", opt$power), " |\n"))
+  write_report(paste0("| Network Type | ", opt$networkType, " |\n"))
+  write_report(paste0("| TOM Type | ", opt$TOMType, " |\n"))
+  write_report(paste0("| Deep Split | ", opt$deepSplit, " |\n"))
+  write_report(paste0("| Min Module Size | ", opt$minModuleSize, " |\n"))
+  write_report(paste0("| Min KME to Stay | ", opt$minKMEtoStay, " |\n"))
+  write_report(paste0("| Detect Cut Height | ", opt$detectCutHeight, " |\n"))
+  write_report(paste0("| Reassign Threshold | ", opt$reassignThreshold, " |\n"))
+  write_report(paste0("| Merge Cut Height | ", opt$mergeCutHeight, " |\n"))
+  write_report(paste0("| Max Mod0 Ratio | ", opt$MaxMod0ratio, " |\n"))
+  write_report(paste0("| Tuning | ", opt$tuning, " |\n"))
+  write_report(paste0("| Only Tune | ", opt$onlytune, " |\n"))
+  write_report(paste0("\n---\n\n"))
+} else {
+  write_report(paste0("\n---\n\n"))
+  write_report(paste0("## Report Continued: ", Sys.time(), "\n\n"))
+}
+
 ##auto_calculate_power#######
 library(DDPNA)
 library(WGCNA)
+
+# Function to save plots as both PDF and PNG
+save_plot_both <- function(plot_func, filename_base, width = 10, height = 8, dpi = 300, ...) {
+  pdf_file <- file.path(plot_dir, paste0(filename_base, ".pdf"))
+  png_file <- file.path(plot_dir, paste0(filename_base, ".png"))
+  
+  # Save as PDF
+  pdf(pdf_file, width = width, height = height)
+  plot_func(...)
+  dev.off()
+  
+  # Save as PNG
+  png(png_file, width = width * dpi, height = height * dpi, res = dpi)
+  plot_func(...)
+  dev.off()
+  
+  return(list(pdf = pdf_file, png = basename(png_file)))
+}
 
 if(is.na(opt$power)) {
   message("power will calculated auto.")
@@ -148,18 +347,31 @@ if(is.na(opt$power)) {
             call. = FALSE)}
     powers <- c(c(1:10), seq(from = 12, to = 24, by = 2));
     sft <- WGCNA::pickSoftThreshold(data,networkType = opt$networkType,powerVector =powers,...);
-    if (is.character(filename) & length(filename) == 1){
-      #if (!dir.exists("plot")) dir.create("plot");
-      #pdf(paste0("plot/", "SoftThershold ", filename, ".pdf"))
-      pdf(paste0( "SoftThershold ", filename, ".pdf")) #200703
-    }
+    
+    # Generate both PDF and PNG
+    pdf_file <- file.path(plot_dir, paste0("SoftThershold_", filename, ".pdf"))
+    png_file <- file.path(plot_dir, paste0("SoftThershold_", filename, ".png"))
+    
+    # Save as PDF
+    pdf(pdf_file, width = 10, height = 8)
     plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[ ,2],
          xlab = xlab, ylab = ylab, type = "n",
          main = main);
     text(sft$fitIndices[ ,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
          labels=powers,cex=0.9,col="red");
     abline(h=0.90,col="red");
-    if (is.character(filename) & length(filename) == 1) dev.off()
+    dev.off()
+    
+    # Save as PNG
+    png(png_file, width = 10 * 300, height = 8 * 300, res = 300)
+    plot(sft$fitIndices[,1], -sign(sft$fitIndices[,3])*sft$fitIndices[ ,2],
+         xlab = xlab, ylab = ylab, type = "n",
+         main = main);
+    text(sft$fitIndices[ ,1], -sign(sft$fitIndices[,3])*sft$fitIndices[,2],
+         labels=powers,cex=0.9,col="red");
+    abline(h=0.90,col="red");
+    dev.off()
+    
     sft;
   }
   sft = SoftThresholdScaleGraph(wgcnadata,filename = output,
@@ -169,6 +381,19 @@ if(is.na(opt$power)) {
   if(is.infinite(sft$powerEstimate)) stop("No SFT reach the setting parameter.")
   cat("--the best WGCNA construct power is ", sft$powerEstimate,"--")
   opt$power = sft$powerEstimate
+  
+  # Report: Soft threshold selection
+  write_report(paste0("## 1. Soft Threshold Selection\n\n"))
+  write_report(paste0("Threshold for scale-free topology (R^2): 0.85\n\n"))
+  write_report(paste0("Power range tested: 1-10, 12-24 (even numbers)\n\n"))
+  write_report(paste0("**Selected Power:** ", opt$power, "\n\n"))
+  write_report(paste0("- Scale-free topology fit (R^2): ", 
+                      sft$fitIndices$SFT.R.sq[sft$fitIndices$Power == opt$power], "\n\n"))
+  write_report(paste0("- Mean connectivity: ", 
+                      sft$fitIndices$mean.k.[sft$fitIndices$Power == opt$power], "\n\n"))
+  write_report(paste0("### Power Selection Plot\n\n"))
+  write_report(paste0("![Power Selection](plot/SoftThershold_", output, ".png)\n\n"))
+  write_report(paste0("*Files: SoftThershold_", output, ".pdf / .png*\n\n"))
 }
 
 ##tuning #####
@@ -208,10 +433,9 @@ if(opt$tuning) {
                            MaxMod0ratio = opt$MaxMod0ratio,
                            detectCutHeight = opt$detectCutHeight,
                            reassignThreshold=opt$reassignThreshold,
-                           mergeCutHeight = opt$mergeCutHeight,
-                           minModSize = opt$minModuleSize))
+                           mergeCutHeight = opt$mergeCutHeight))
   if(!inherits(WGCNAadjust,"try-error")){
-    write.csv(WGCNAadjust,file = paste0(opt$output,"_WGCNAadjust.csv"))
+    write.csv(WGCNAadjust,file = file.path(opt$outputdir, paste0(opt$output,"_WGCNAadjust.csv")))
     if(ncol(WGCNAadjust) == 0) stop("No tuning to satisfy.")
     pos = which(rownames(WGCNAadjust) == 0)
     WGCNAadjust2 <- WGCNAadjust[,unlist(is.na(WGCNAadjust[pos+17,])) & unlist(!is.na(WGCNAadjust[10+pos,]))]
@@ -242,6 +466,27 @@ if(!opt$onlytune) {
                    ", reassignThreshold:",opt$reassignThreshold,
                    ", mergeCutHeight:",opt$mergeCutHeight,"\n ")
   cat(record1)
+  
+  # Report: Module detection
+  write_report(paste0("## 2. Module Detection\n\n"))
+  write_report(paste0("**Method:** blockwiseModules (WGCNA)\n\n"))
+  write_report(paste0("- Correlation function: bicor\n\n"))
+  write_report(paste0("- Max block size: 20000\n\n"))
+  write_report(paste0("- pamRespectsDendro: FALSE\n\n"))
+  write_report(paste0("- Numeric labels: TRUE\n\n"))
+  write_report(paste0("### Parameters Used\n\n"))
+  write_report(paste0("| Parameter | Value |\n"))
+  write_report(paste0("|-----------|-------|\n"))
+  write_report(paste0("| Power | ", opt$power, " |\n"))
+  write_report(paste0("| Network Type | ", opt$networkType, " |\n"))
+  write_report(paste0("| TOM Type | ", opt$TOMType, " |\n"))
+  write_report(paste0("| Deep Split | ", opt$deepSplit, " |\n"))
+  write_report(paste0("| Min Module Size | ", opt$minModuleSize, " |\n"))
+  write_report(paste0("| Min KME to Stay | ", opt$minKMEtoStay, " |\n"))
+  write_report(paste0("| Detect Cut Height | ", opt$detectCutHeight, " |\n"))
+  write_report(paste0("| Reassign Threshold | ", opt$reassignThreshold, " |\n"))
+  write_report(paste0("| Merge Cut Height | ", opt$mergeCutHeight, " |\n\n"))
+  
   CoExpNet = blockwiseModules(wgcnadata, power = opt$power, 
                               maxBlockSize = 20000, corType = "bicor",
                               networkType = opt$networkType,
@@ -259,17 +504,129 @@ if(!opt$onlytune) {
   moduleinf <- Module_inf(CoExpNet,inf,inftype = "none",IDname = "GN")
   MEinf <- ME_inf(CoExpNet$MEs,quant,intensity.type = "none")
   
+  # Report: Module detection results
+  module_table <- table(moduleinf$moduleNum)
+  module_count <- length(unique(moduleinf$moduleNum))
+  grey_count <- sum(moduleinf$moduleNum == 0)
+  
+  write_report(paste0("### Detection Results\n\n"))
+  write_report(paste0("- **Total modules detected:** ", module_count, "\n\n"))
+  write_report(paste0("- **Grey module (unassigned) genes:** ", grey_count, "\n\n"))
+  write_report(paste0("- **Assigned genes:** ", nrow(moduleinf) - grey_count, "\n\n"))
+  write_report(paste0("#### Module Size Distribution\n\n"))
+  write_report(paste0("| Module | Gene Count |\n"))
+  write_report(paste0("|--------|------------|\n"))
+  for(mod in names(module_table)) {
+    mod_name <- ifelse(mod == "0", "Grey (unassigned)", paste0("ME", mod))
+    write_report(paste0("| ", mod_name, " | ", module_table[mod], " |\n"))
+  }
+  write_report(paste0("\n"))
+  
+  # Report: Module-trait relationships (if covar data available)
+  covar_exists <- "covar" %in% ls() && !is.null(covar) && ncol(covar) > 0
+  if(covar_exists) {
+    write_report(paste0("## 3. Module-Trait Relationships\n\n"))
+    write_report(paste0("**Covariate data available:** YES\n\n"))
+    write_report(paste0("- Number of traits analyzed: ", ncol(covar), "\n\n"))
+    write_report(paste0("- Traits: ", paste(colnames(covar), collapse = ", "), "\n\n"))
+    
+    # Calculate module-trait correlations
+    MEs <- orderMEs(CoExpNet$MEs)
+    covar_numeric <- covar
+    for(i in 1:ncol(covar_numeric)) {
+      if(is.factor(covar_numeric[[i]]) || is.character(covar_numeric[[i]])) {
+        covar_numeric[[i]] <- as.numeric(as.factor(covar_numeric[[i]]))
+      }
+    }
+    moduleTraitCor <- cor(MEs, covar_numeric, use = "p")
+    moduleTraitPvalue <- corPvalueStudent(moduleTraitCor, nrow(wgcnadata))
+    
+    write_report(paste0("### Significant Module-Trait Correlations (p < 0.05)\n\n"))
+    sig_count <- 0
+    sig_results <- data.frame(Module = character(), Trait = character(), Correlation = numeric(), Pvalue = numeric(), stringsAsFactors = FALSE)
+    for(i in 1:nrow(moduleTraitCor)) {
+      for(j in 1:ncol(moduleTraitCor)) {
+        if(moduleTraitPvalue[i,j] < 0.05) {
+          sig_count <- sig_count + 1
+          sig_results <- rbind(sig_results, data.frame(
+            Module = rownames(moduleTraitCor)[i],
+            Trait = colnames(moduleTraitCor)[j],
+            Correlation = round(moduleTraitCor[i,j], 3),
+            Pvalue = format(moduleTraitPvalue[i,j], digits = 3, scientific = TRUE)
+          ))
+        }
+      }
+    }
+    if(sig_count == 0) {
+      write_report(paste0("No significant module-trait correlations found.\n\n"))
+    } else {
+      write_report(paste0("| Module | Trait | Correlation | P-value |\n"))
+      write_report(paste0("|--------|-------|-------------|---------|\n"))
+      for(i in 1:nrow(sig_results)) {
+        write_report(paste0("| ", sig_results$Module[i], " | ", sig_results$Trait[i], 
+                           " | ", sig_results$Correlation[i], " | ", sig_results$Pvalue[i], " |\n"))
+      }
+      write_report(paste0("\n**Total significant correlations:** ", sig_count, "\n\n"))
+    }
+    write_report(paste0("### Module-Trait Heatmap\n\n"))
+    write_report(paste0("![Module-Trait Heatmap](plot/Module_trait_heatmap_", output, ".png)\n\n"))
+    write_report(paste0("*Files: Module_trait_heatmap_", output, ".pdf / .png*\n\n"))
+  }
+  
   loginfo1 = list(record = paste0(record1,
                                   "do WGCNA and draw regular WGCNA plot.\n"),
                   input = opt$input,
-                  output = paste0(opt$output,"_WGCNAnet.Rdata"),
+                  output = file.path(opt$outputdir, paste0(opt$output,"_WGCNAnet.Rdata")),
                   sessionInfo = sessionInfo(),
                   srcipt = "step3_WGCNA_R v1.1", parameter = opt,
                   running_time = Sys.time())
   
   loginfo = c(loginfo, step3_WGCNA_R = list(loginfo1))
   
-  save(CoExpNet, MEinf, moduleinf,loginfo,list=otherobj, file = paste0(opt$output,"_WGCNAnet.Rdata")) 
+  save(CoExpNet, MEinf, moduleinf,loginfo,report_file,list=otherobj, 
+       file = file.path(opt$outputdir, paste0(opt$output,"_WGCNAnet.Rdata")))
+  
+  # Report: Plots section
+  write_report(paste0("## 4. Visualization\n\n"))
+  write_report(paste0("Generated plots (both PDF and PNG formats):\n\n"))
+  write_report(paste0("### Module Dendrogram and Colors\n\n"))
+  write_report(paste0("![Module Dendrogram](plot/", opt$output, "_WGCNA.png)\n\n"))
+  write_report(paste0("*Files: ", opt$output, "_WGCNA.pdf / .png*\n\n"))
+  
+  # Report: File summary
+  write_report(paste0("## 5. Generated Files Summary\n\n"))
+  write_report(paste0("### Main Output Files\n\n"))
+  write_report(paste0("| File | Description |\n"))
+  write_report(paste0("|------|-------------|\n"))
+  write_report(paste0("| ", opt$output, "_WGCNAnet.Rdata | Main WGCNA results (CoExpNet, MEinf, moduleinf) |\n"))
+  write_report(paste0("| ", opt$output, "_WGCNA_module_gene_info.csv | Module gene assignments |\n"))
+  write_report(paste0("| ", opt$output, "_WGCNA_ME_matrix.csv | Module eigengene matrix |\n"))
+  
+  output_files <- c(
+    paste0("SoftThershold_", opt$output, ".pdf"),
+    paste0("Module_trait_heatmap_", opt$output, ".pdf"),
+    paste0(opt$output, "_WGCNA.pdf")
+  )
+  
+  # Check which files actually exist
+  existing_files <- sapply(output_files, function(f) file.exists(file.path(plot_dir, f)))
+  
+  for(i in seq_along(output_files)) {
+    if(existing_files[i]) {
+      base_name <- tools::file_path_sans_ext(output_files[i])
+      write_report(paste0("| plot/", base_name, ".pdf/png | Visualization plot |\n"))
+    }
+  }
+  
+  if(opt$tuning && file.exists(file.path(opt$outputdir, paste0(opt$output, "_WGCNAadjust.csv")))) {
+    write_report(paste0("| ", opt$output, "_WGCNAadjust.csv | Parameter tuning results |\n"))
+  }
+  
+  write_report(paste0("\n### Report File\n\n"))
+  write_report(paste0("- ", basename(report_file), "\n\n"))
+  write_report(paste0("---\n\n"))
+  write_report(paste0("**WGCNA Analysis Completed**\n\n"))
+  write_report(paste0("End Time: ", Sys.time(), "\n"))
   
   rm(input)
   if(length(unique(moduleinf$moduleNum)) != 1) {
@@ -279,7 +636,19 @@ if(!opt$onlytune) {
   print(table(moduleinf$moduleNum))
 } else {
   message("onlytune, see SoftThershold_xx.pdf or xx_WGCNAadjust.csv to see the parameter.")
-}
-
-
   
+  # Report for onlytune mode
+  write_report(paste0("## Parameter Tuning Mode Only\n\n"))
+  write_report(paste0("**Mode:** onlytune = TRUE\n\n"))
+  write_report(paste0("No module detection was performed.\n\n"))
+  write_report(paste0("### Generated Files\n\n"))
+  if(file.exists(file.path(plot_dir, paste0("SoftThershold_", output, ".pdf")))) {
+    write_report(paste0("- SoftThershold_", output, ".pdf / .png\n\n"))
+  }
+  if(file.exists(file.path(opt$outputdir, paste0(opt$output, "_WGCNAadjust.csv")))) {
+    write_report(paste0("- ", opt$output, "_WGCNAadjust.csv\n\n"))
+  }
+  write_report(paste0("---\n\n"))
+  write_report(paste0("**WGCNA Tuning Completed**\n\n"))
+  write_report(paste0("End Time: ", Sys.time(), "\n"))
+}

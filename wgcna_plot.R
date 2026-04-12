@@ -1,8 +1,9 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录，同时生成PDF和PNG格式图表
 
 
 objs <- ls();
@@ -12,7 +13,11 @@ if("input" %in% objs) {
 } else if(!all(c("CoExpNet","MEinf","moduleinf") %in% objs))
   stop("No one of CoExpNet, MEinf or moduleinf.")
 
-if(!dir.exists("plot")) dir.create("plot")
+#V2.1: 使用outputdir参数创建plot目录
+outputdir <- ifelse(exists("outputdir") && !is.na(outputdir), outputdir, ".")
+plot_dir <- file.path(outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+
 #plot1
 moduleLabels = CoExpNet$colors
 moduleColors = labels2colors(moduleLabels)
@@ -67,7 +72,8 @@ if("meta" %in% ls()) {
 
 
 
-pdf(file = paste0("plot/",output,"_WGCNA.pdf"),
+# Save as PDF
+pdf(file = file.path(plot_dir, paste0(output,"_WGCNA.pdf")),
     width = 20, height = 10)
 plotDendroAndColors(CoExpNet$dendrograms[[1]], 
                     moduleColors[CoExpNet$blockGenes[[1]]],
@@ -99,3 +105,102 @@ if("meta" %in% ls()) {
                  main = paste("Module-trait relationships"))
 }
 graphics.off()
+
+# Save as PNG - each plot as a separate file
+# 1. Module dendrogram and colors
+png(file = file.path(plot_dir, paste0(output,"_WGCNA_module_dendro.png")),
+    width = 12, height = 8, units = "in", res = 300)
+plotDendroAndColors(CoExpNet$dendrograms[[1]], 
+                    moduleColors[CoExpNet$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+graphics.off()
+
+# 2. Module dendrogram with merged colors
+png(file = file.path(plot_dir, paste0(output,"_WGCNA_merged_colors.png")),
+    width = 12, height = 8, units = "in", res = 300)
+plotDendroAndColors(CoExpNet$dendrograms[[1]], 
+                    MCol[CoExpNet$blockGenes[[1]],],
+                    groupLabels = NULL,
+                    dendroLabels = FALSE, hang = 0.03,
+                    addGuide = TRUE, guideHang = 0.05)
+graphics.off()
+
+# 3. Eigengene adjacency heatmap (no dendrograms)
+png(file = file.path(plot_dir, paste0(output,"_WGCNA_eigengene_heatmap.png")),
+    width = 10, height = 8, units = "in", res = 300)
+plotEigengeneNetworks(MEs_col, "Eigengene adjacency heatmap", 
+                      marDendro = c(3,3,2,4), greyLabel = 0,
+                      marHeatmap = c(3,4,2,2), plotDendrograms = F, 
+                      xLabelsAngle = 90)
+graphics.off()
+
+# 4. Eigengene adjacency heatmap (with dendrograms)
+png(file = file.path(plot_dir, paste0(output,"_WGCNA_eigengene_dendro.png")),
+    width = 10, height = 8, units = "in", res = 300)
+plotEigengeneNetworks(MEs, "Eigengene adjacency heatmap", 
+                      marDendro = c(3,3,2,4),
+                      marHeatmap = c(3,4,2,2), plotDendrograms = T, 
+                      xLabelsAngle = 90)
+graphics.off()
+
+# 5. Module-trait relationships (if meta exists)
+if("meta" %in% ls()) {
+  png(file = file.path(plot_dir, paste0(output,"_WGCNA_module_trait.png")),
+      width = 12, height = 10, units = "in", res = 300)
+  par(mar = c(5, 6, 3, 4));
+  labeledHeatmap(Matrix = t(modmodCor), xLabels = colnames(MEs), 
+                 yLabels = colnames(meta), 
+                 cex.lab = 0.7, xLabelsAngle = 0, xLabelsAdj = 0.5,
+                 ySymbols = colnames(meta), colorLabels = FALSE, 
+                 colors = blueWhiteRed(50), 
+                 textMatrix = t(textMatrix), setStdMargins = FALSE, 
+                 cex.text = 0.6, zlim = c(-1,1),
+                 main = paste("Module-trait relationships"))
+  graphics.off()
+}
+
+# Also save individual module-trait heatmap as separate files if meta exists
+if("meta" %in% ls()) {
+  # Save module-trait heatmap as separate PDF
+  pdf(file = file.path(plot_dir, paste0("Module_trait_heatmap_", output, ".pdf")),
+      width = 12, height = 10)
+  par(mar = c(5, 8, 3, 4));
+  labeledHeatmap(Matrix = t(modmodCor), xLabels = colnames(MEs), 
+                 yLabels = colnames(meta), 
+                 cex.lab = 0.8, xLabelsAngle = 0, xLabelsAdj = 0.5,
+                 ySymbols = colnames(meta), colorLabels = FALSE, 
+                 colors = blueWhiteRed(50), 
+                 textMatrix = t(textMatrix), setStdMargins = FALSE, 
+                 cex.text = 0.7, zlim = c(-1,1),
+                 main = paste("Module-trait relationships"))
+  graphics.off()
+  
+  # Save module-trait heatmap as separate PNG
+  png(file = file.path(plot_dir, paste0("Module_trait_heatmap_", output, ".png")),
+      width = 12, height = 10, units = "in", res = 300)
+  par(mar = c(5, 8, 3, 4));
+  labeledHeatmap(Matrix = t(modmodCor), xLabels = colnames(MEs), 
+                 yLabels = colnames(meta), 
+                 cex.lab = 0.8, xLabelsAngle = 0, xLabelsAdj = 0.5,
+                 ySymbols = colnames(meta), colorLabels = FALSE, 
+                 colors = blueWhiteRed(50), 
+                 textMatrix = t(textMatrix), setStdMargins = FALSE, 
+                 cex.text = 0.7, zlim = c(-1,1),
+                 main = paste("Module-trait relationships"))
+  graphics.off()
+}
+
+message(paste0("WGCNA plots saved to: ", plot_dir))
+message("Generated files:")
+message(paste0("  - ", output, "_WGCNA.pdf"))
+message(paste0("  - ", output, "_WGCNA_module_dendro.png"))
+message(paste0("  - ", output, "_WGCNA_merged_colors.png"))
+message(paste0("  - ", output, "_WGCNA_eigengene_heatmap.png"))
+message(paste0("  - ", output, "_WGCNA_eigengene_dendro.png"))
+if("meta" %in% ls()) {
+  message(paste0("  - ", output, "_WGCNA_module_trait.png"))
+  message(paste0("  - Module_trait_heatmap_", output, ".pdf"))
+  message(paste0("  - Module_trait_heatmap_", output, ".png"))
+}

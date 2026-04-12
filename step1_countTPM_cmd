@@ -1,9 +1,10 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
 #using count and TPM
+#V2.1: 添加outputdir参数支持指定输出目录，添加Markdown报告和PNG图表输出
 
 min.count = 6
 distmethod = "manhattan";
@@ -30,6 +31,8 @@ option_list = list(
               type='character',help="meta file path"),
   make_option("--output", action="store", default=NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default=NA,
+              type='character',help="output directory path"),
   make_option("--funcdir", action="store", default =NA,
               type='character',help="preprocess function file path"),
   make_option("--sdout", action="store", default=NA,
@@ -53,6 +56,10 @@ allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
+}
+if(is.na(opt$outputdir)) {
+  opt$outputdir = ".";
+  message("no outputdir, setting to current directory")
 }
 if(is.na(opt$funcdir)) {
   warning('funcdir is setting to NA, means preprocess_func.R in the default dir');
@@ -137,6 +144,107 @@ otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"loginfo" %in% ls()) loginfo = list();
 
+### 0.1.5 Find Step 0 Report Function ####
+find_step0_report <- function(quantfile, outputdir) {
+  if(is.na(quantfile) || !file.exists(quantfile)) {
+    return(NULL)
+  }
+  base_name <- sub("\\.(txt|csv|RData)$", "", basename(quantfile))
+  base_name_alt <- sub("(_raw|_step0).*", "", base_name)
+  possible_reports <- c(
+    file.path(outputdir, paste0(base_name, "_step0_report.md")),
+    file.path(outputdir, paste0(base_name, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_step0_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_report.md")),
+    file.path(outputdir, paste0(base_name_alt, "_step0_report.md")),
+    file.path(outputdir, paste0(base_name_alt, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_step0_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_report.md"))
+  )
+  possible_reports <- unique(possible_reports)
+  for(report_path in possible_reports) {
+    if(file.exists(report_path)) {
+      message("Found step0 report: ", report_path)
+      return(report_path)
+    }
+  }
+  message("No step0 report found for: ", quantfile)
+  return(NULL)
+}
+
+# Find step0 report
+step0_report_file <- find_step0_report(opt$quantfile, opt$outputdir)
+
+### 0.1.5 Initialize Markdown Report ####
+# V2.1 revised: Initialize Markdown report after loading data with step1-specific naming
+# Determine report file name (step1-specific)
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step1_report.md"))
+
+# Check if input data has report_file object (from previous step)
+existing_report <- NULL
+if("report_file" %in% otherobj) {
+  if(exists("report_file") && file.exists(report_file)) {
+    existing_report <- report_file
+  }
+}
+
+# Check if target report already exists (same output name, multiple runs)
+report_append <- file.exists(report_file)
+
+# If no target report but have existing report from different output, copy it
+if(!report_append && !is.null(existing_report) && file.exists(existing_report)) {
+  if(normalizePath(existing_report, mustWork = FALSE) != normalizePath(report_file, mustWork = FALSE)) {
+    file.copy(existing_report, report_file, overwrite = TRUE)
+    report_append <- TRUE
+  }
+}
+
+# Initialize or append report
+if(!report_append) {
+  # Create new report
+  cat("# Step 1: RNA-seq Preprocessing Report (countTPM)\n\n", file = report_file)
+  cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+  
+  # Write parameters section
+  cat("## Parameters\n\n", file = report_file, append = TRUE)
+  cat("| Parameter | Value |\n", file = report_file, append = TRUE)
+  cat("|-----------|-------|\n", file = report_file, append = TRUE)
+  cat("| quantfile | ", ifelse(is.na(opt$quantfile), "NA", opt$quantfile), " |\n", file = report_file, append = TRUE)
+  cat("| covarfile | ", ifelse(is.na(opt$covarfile), "NA", opt$covarfile), " |\n", file = report_file, append = TRUE)
+  cat("| output | ", opt$output, " |\n", file = report_file, append = TRUE)
+  cat("| outputdir | ", opt$outputdir, " |\n", file = report_file, append = TRUE)
+  cat("| step | ", opt$step, " |\n", file = report_file, append = TRUE)
+  cat("| norm.method | ", opt$norm.method, " |\n", file = report_file, append = TRUE)
+  cat("| sdout | ", opt$sdout, " |\n", file = report_file, append = TRUE)
+  cat("| min.value | ", opt$min.value, " |\n", file = report_file, append = TRUE)
+  cat("| ratio | ", opt$ratio, " |\n", file = report_file, append = TRUE)
+  cat("| grpname | ", ifelse(is.na(opt$grpname), "NA", opt$grpname), " |\n\n", file = report_file, append = TRUE)
+  
+  if(!is.null(step0_report_file)) {
+    cat("### Linked Report\n\n", file = report_file, append = TRUE)
+    cat("**Previous Step:** [Step 0 Report](", basename(step0_report_file), ")\n\n", file = report_file, append = TRUE)
+  }
+} else {
+  # Append to existing report (same output, multiple runs)
+  cat("\n---\n\n", file = report_file, append = TRUE)
+  cat("## Step 1: RNA-seq Preprocessing Report (countTPM) (Additional Run)\n\n", file = report_file, append = TRUE)
+  cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+  
+  cat("## Parameters\n\n", file = report_file, append = TRUE)
+  cat("| Parameter | Value |\n", file = report_file, append = TRUE)
+  cat("|-----------|-------|\n", file = report_file, append = TRUE)
+  cat("| quantfile | ", ifelse(is.na(opt$quantfile), "NA", opt$quantfile), " |\n", file = report_file, append = TRUE)
+  cat("| covarfile | ", ifelse(is.na(opt$covarfile), "NA", opt$covarfile), " |\n", file = report_file, append = TRUE)
+  cat("| output | ", opt$output, " |\n", file = report_file, append = TRUE)
+  cat("| outputdir | ", opt$outputdir, " |\n", file = report_file, append = TRUE)
+  cat("| step | ", opt$step, " |\n", file = report_file, append = TRUE)
+  cat("| norm.method | ", opt$norm.method, " |\n", file = report_file, append = TRUE)
+  cat("| sdout | ", opt$sdout, " |\n", file = report_file, append = TRUE)
+  cat("| min.value | ", opt$min.value, " |\n", file = report_file, append = TRUE)
+  cat("| ratio | ", opt$ratio, " |\n", file = report_file, append = TRUE)
+  cat("| grpname | ", ifelse(is.na(opt$grpname), "NA", opt$grpname), " |\n\n", file = report_file, append = TRUE)
+}
+
 ### 0.3 obj check (covar can not exist) ################
 quant <- tpm
 #check when no covar, grpname should be NA 
@@ -200,7 +308,11 @@ quant <- tpm
 miss.value = 0;
 savedname = NULL
 step1r_final_rec = NULL
-if(!"./plot" %in% list.dirs()) {dir.create("plot")}
+#V2.1: 使用outputdir参数创建plot目录和assets目录
+plot_dir <- get_plot_dir(opt$outputdir)
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+
 ### 1. remove all zero genes #########
 cat('-----RNAseq data preprocess 1----- \n')
 #remove genes which have no value
@@ -233,25 +345,34 @@ if(grepl("2",opt$step)) {
   quant[quant ==0] <- NA
   data <- list(inf = data.frame(ID = rownames(quant)), intensity = data.frame(quant,check.names = FALSE))
   data_rmOut <- try(Outlier_Detect(data,maxNA = 1,
-                                   sdout = opt$sdout,filename = opt$output,
-                                   distmethod = distmethod),silent = TRUE)
+                                   sdout = opt$sdout,filename = paste0(opt$output,"_step1"),
+                                   distmethod = distmethod, outputdir = opt$outputdir),silent = TRUE)
   if(class(data_rmOut)=="try-error") stop("Outlier detection have some bugs.")
   quant <- data_rmOut$intensity
   quant[is.na(quant)] <- 0
   count <- count[,colnames(count) %in% colnames(quant)]
   int_rm <- quant #250730 for plot
   s2 <- ncol(quant);
-  plotfile <- list.files("plot/",pattern = paste(opt$output,"outliersample"))
+  plotfile <- list.files(plot_dir, pattern = paste0(opt$output,"_step1_outliersample"))
   loginfo1 = list(record = paste0("using Data_impute to remove outlier, sdout:",opt$sdout,", distmethod:",distmethod,
                                   "\n do ",length(plotfile)-1," times to remove the outlier.\n ",
                                   "remove ",s1-s2," samples and remain ", s2, " sample X ",g1," genes.\n"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,savedname,".RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,savedname,".RData")),
                   packageVersion =paste("DDPNA",packageVersion("DDPNA")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_rna v2.0", parameter = opt,
+                  srcipt = "step1_countTPM v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1.1_removeOutlier = list(loginfo1))
+
+  # Report: Outlier removal
+  cat("## Processing Steps\n\n", file = report_file, append = TRUE)
+  cat("### Step 1: Sample Outlier Removal\n\n", file = report_file, append = TRUE)
+  cat("- **Method**: Outlier detection using ", distmethod, " distance\n", file = report_file, append = TRUE)
+  cat("- **SD threshold**: ", opt$sdout, "\n", file = report_file, append = TRUE)
+  cat("- **Samples removed**: ", s1-s2, "\n", file = report_file, append = TRUE)
+  cat("- **Samples remaining**: ", s2, "\n", file = report_file, append = TRUE)
+  cat("- **Output file**: `", paste0(opt$output,savedname,".RData"), "`\n\n", file = report_file, append = TRUE)
 
   #if outlier detection process change sample name, it will break in step 1.
   if("covar" %in% ls()) {
@@ -264,9 +385,9 @@ if(grepl("2",opt$step)) {
       opt$step = 2
       message("Running is break in step 1.")
     }
-    save(quant, covar,loginfo,list = otherobj,file =paste0(opt$output,savedname,".RData")) #230201 updated
+    save(quant, covar,loginfo,report_file,list = otherobj,file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData"))) #230201 updated
   } else 
-    save(quant, loginfo,list = otherobj, file =paste0(opt$output,savedname,".RData")) #230201 updated
+    save(quant, loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData"))) #230201 updated
   
   cat('---1. sample outlier was removed--- \n')
   cat(paste0("remove ",s1-s2," samples and remain ", s2, " sample X ",g1," genes. \n"))
@@ -304,9 +425,9 @@ if(grepl("3",opt$step)){
   loginfo2 = list(record = paste0("Gene filter, min.count:",opt$min.value,", groupname:",opt$grpname,"\n",
                                   "remove ",g1-g2," genes and remain ", s2, " sample X ",g2," genes. \n"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,savedname,".RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,savedname,".RData")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_rna v2.0", parameter = opt,
+                  srcipt = "step1_countTPM v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1.2_genefilter = list(loginfo2))
   #remove gene in IDinf
@@ -318,8 +439,16 @@ if(grepl("3",opt$step)){
     }
   }
   if("covar" %in% ls())
-    save(quant, covar,loginfo,list = otherobj, file =paste0(opt$output,savedname,".RData")) else #230201 updated
-      save(quant,loginfo,list = otherobj, file =paste0(opt$output,savedname,".RData"))  #230201 updated
+    save(quant, covar,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData"))) else #230201 updated
+      save(quant,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData")))  #230201 updated
+  
+  # Report: Gene filter
+  cat("### Step 2: Gene Filtering\n\n", file = report_file, append = TRUE)
+  cat("- **Min count threshold**: ", opt$min.value, "\n", file = report_file, append = TRUE)
+  cat("- **Min ratio**: ", opt$ratio, "\n", file = report_file, append = TRUE)
+  cat("- **Genes removed**: ", g1-g2, "\n", file = report_file, append = TRUE)
+  cat("- **Genes remaining**: ", g2, "\n", file = report_file, append = TRUE)
+  cat("- **Output file**: `", paste0(opt$output,savedname,".RData"), "`\n\n", file = report_file, append = TRUE)
   
   cat('---2. gene filter was finished--- \n')
   cat(paste0("remove ",g1-g2," genes and remain ", s2, " sample X ",g2," genes. \n"))
@@ -354,26 +483,35 @@ if(grepl("4",opt$step)) {
   }
   int_norm <- quant
   loginfo3 = list(record = paste0("using",opt$norm.method,"to normalize, log2(x+1)\n",
-                                  "density plot was draw and save in plot/densitty_plot_",opt$output,".pdf\n"),
+                                  "density plot was draw and save in ",plot_dir,"/densitty_plot_",opt$output,".pdf\n"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,savedname,".RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,savedname,".RData")),
                   packageVersion =if(opt$norm.method =="TMM") paste("edgeR",packageVersion("edgeR")) else paste("preprocessCore",packageVersion("preprocessCore")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_rna v2.0", parameter = opt,
+                  srcipt = "step1_countTPM v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1.3_normalize = list(loginfo3))
   #save TMM result
   if("covar" %in% ls()) #230201 updated
-    save(quant, covar,loginfo,list = otherobj, file =paste0(opt$output,savedname,".RData")) else
-      save(quant,loginfo,list = otherobj, file =paste0(opt$output,savedname,".RData"))
+    save(quant, covar,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData"))) else
+      save(quant,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,".RData")))
   #log2 result
   minvalue = 1;
   quant <- log2(quant*signif(1/opt$min.value,digits = 2)+signif(minvalue,digits = 2))
   int_log2 <- quant
-  loginfo$step1.3_normalize$output = paste0(opt$output,"_log_",opt$norm.method,".RData")
+  loginfo$step1.3_normalize$output = file.path(opt$outputdir, paste0(opt$output,"_log_",opt$norm.method,".RData"))
   if("covar" %in% ls()) #230201 updated
-    save(quant, covar,minvalue,loginfo,list = otherobj, file = paste0(opt$output,"_log_",opt$norm.method,".RData")) else
-      save(quant, minvalue,loginfo,list = otherobj, file = paste0(opt$output,"_log_",opt$norm.method,".RData"))
+    save(quant, covar,minvalue,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_log_",opt$norm.method,".RData"))) else
+      save(quant, minvalue,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_log_",opt$norm.method,".RData")))
+  
+  # Report: Normalization
+  cat("### Step 3: Normalization\n\n", file = report_file, append = TRUE)
+  cat("- **Method**: ", opt$norm.method, "\n", file = report_file, append = TRUE)
+  cat("- **Log2 transform**: Yes (with offset = ", minvalue, ")\n", file = report_file, append = TRUE)
+  cat("- **Output files**:\n", file = report_file, append = TRUE)
+  cat("  - `", paste0(opt$output,savedname,".RData"), "` (normalized counts)\n", file = report_file, append = TRUE)
+  cat("  - `", paste0(opt$output,"_log_",opt$norm.method,".RData"), "` (log2 transformed)\n\n", file = report_file, append = TRUE)
+  
   cat('---3. normalization was finished. --- \n')
   cat(minvalue, "was used in log transform.\n")
   cat("Final file was ", opt$output,"_log_",opt$norm.method,".RData\n",sep = "")
@@ -392,21 +530,31 @@ if(grepl("5",opt$step)) {
   }))
   loginfo4 = list(record = paste0("using inverse normalization transform to make the value have normal distribution.\n"),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,savedname,"_INT.RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,savedname,"_INT.RData")),
                   sessionInfo = sessionInfo(),
-                  srcipt = "step1_rna v2.0", parameter = opt,
+                  srcipt = "step1_countTPM v2.1", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step1.4_normalize = list(loginfo4))
   int_INT <- quant
   #save TMM result
   if("covar" %in% ls()) #230201 updated
-    save(quant, covar,loginfo,list = otherobj, file =paste0(opt$output,savedname,"_INT.RData")) else
-      save(quant,loginfo,list = otherobj, file =paste0(opt$output,savedname,"_INT.RData"))
+    save(quant, covar,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,"_INT.RData"))) else
+      save(quant,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,savedname,"_INT.RData")))
+  
+  # Report: INT
+  cat("### Step 4: Inverse Normalization Transform (INT)\n\n", file = report_file, append = TRUE)
+  cat("- **Purpose**: QTL analysis\n", file = report_file, append = TRUE)
+  cat("- **Output file**: `", paste0(opt$output,savedname,"_INT.RData"), "`\n\n", file = report_file, append = TRUE)
+  
   cat('---4. INT was finished. It is only for QTL analysis. --- \n')
 }
 
 ### PCA #####
 #  genefilter process will not draw pca
+pca_png_files <- c()
+# Check if covar exists for PCA plotting
+pca_covar_available <- "covar" %in% ls() && !is.null(covar) && opt$step != "3"
+
 if("covar" %in% ls()) {
   if(opt$step != "3") {
     plotpdfname = "_step1"
@@ -421,10 +569,13 @@ if("covar" %in% ls()) {
       }
       message("PCA is calcluated.")
       if(grepl("1|2",opt$step))
-        save(covar,covar_raw,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData")) else
-          save(covar,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData"))
+        save(covar,covar_raw,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData"))) else
+          save(covar,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData")))
       message("pca result was saved.")
-      pdf(paste0("plot/",opt$output,plotpdfname,"_pcaplot.pdf"), width = 10, height = 8)
+      
+      # V2.1: Save PCA plots as both PDF and PNG
+      pca_pdf_path <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pca.pdf"))
+      pdf(pca_pdf_path, width = 10, height = 8)
       for(i in names(pca_list)) {
         pcadata <- pca_list[[i]]
         if(!is.null(pcadata)) {
@@ -436,10 +587,45 @@ if("covar" %in% ls()) {
         }
       }
       dev.off()
-      message("pca plot was finished.") 
-    } else cat(" - covar is NULL, will not draw PCA plot.- \n")
-  } else cat("- only do gene filter, will not draw PCA plot. - \n")
-} else cat(" - No covar, will not draw PCA plot.- \n")
+      
+      # Save as PNG - each plot as separate file (to assets directory)
+      # Determine suffix for PCA PNG when only step2, step3, step4 or step5 is run
+      pca_step_suffix <- ""
+      if(!grepl("1",opt$step) && !grepl("2",opt$step)) {
+        if(grepl("3",opt$step) && grepl("4",opt$step)) {
+          pca_step_suffix <- "_only34"
+        } else if(grepl("3",opt$step)) {
+          pca_step_suffix <- "_only3"
+        } else if(grepl("4",opt$step)) {
+          pca_step_suffix <- "_only4"
+        } else if(grepl("5",opt$step)) {
+          pca_step_suffix <- "_only5"
+        }
+      }
+      for(i in names(pca_list)) {
+        pcadata <- pca_list[[i]]
+        if(!is.null(pcadata)) {
+          if(inherits(pcadata,"prcomp")) {
+            pca_png_base <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pca_",i,pca_step_suffix))
+            if(i %in% c("raw")) pca_plot_var(pcadata, covar_raw, title = i, filename = pca_png_base)
+            if(i %in% c("rm","norm","INT")) pca_plot_var(pcadata, covar, title = i, filename = pca_png_base)
+          }
+        }
+      }
+      pca_png_files <- c(pca_png_files, paste0(opt$output,plotpdfname,"_pca_*.png"))
+      message("pca plot was saved as PDF and PNG.") 
+    } else {
+      cat(" - covar is NULL, will not draw PCA plot.- \n")
+      pca_covar_available <- FALSE
+    }
+  } else {
+    cat("- only do gene filter, will not draw PCA plot. - \n")
+    pca_covar_available <- FALSE
+  }
+} else {
+  cat(" - No covar, will not draw PCA plot.- \n")
+  pca_covar_available <- FALSE
+}
 
 ### boxplot #######
 cat("- Draw boxplot/density plot - \n")
@@ -459,7 +645,27 @@ if(ncol(int) > 50) {message("Samples large than 50, random pick 50 sample to dra
   if(grepl("4",opt$step)) int_norm2 <- int_norm
   if(grepl("5",opt$step)) int_INT2 <- int_INT
 }
-pdf(paste0("plot/",opt$output,"_sample&gene distribution.pdf"),width = width,height = 6)
+
+# V2.1: Save boxplot/density plots as both PDF and PNG
+# Determine suffix when only step2, step3, step4 or step5 is run
+step_suffix <- ""
+if(!grepl("1",opt$step)) {
+  if(grepl("2",opt$step) && !grepl("3",opt$step) && !grepl("4",opt$step) && !grepl("5",opt$step)) {
+    step_suffix <- "_only2"
+  } else if(grepl("3",opt$step) && !grepl("2",opt$step) && !grepl("4",opt$step) && !grepl("5",opt$step)) {
+    step_suffix <- "_only3"
+  } else if(grepl("4",opt$step) && !grepl("2",opt$step) && !grepl("3",opt$step) && !grepl("5",opt$step)) {
+    step_suffix <- "_only4"
+  } else if(grepl("5",opt$step) && !grepl("2",opt$step) && !grepl("3",opt$step) && !grepl("4",opt$step)) {
+    step_suffix <- "_only5"
+  } else if(grepl("3",opt$step) && grepl("4",opt$step) && !grepl("2",opt$step) && !grepl("5",opt$step)) {
+    step_suffix <- "_only34"
+  }
+}
+dist_pdf <- file.path(plot_dir, paste0(opt$output,"_step1_distribution",step_suffix,".pdf"))
+dist_png <- file.path(plot_dir, paste0(opt$output,"_step1_distribution",step_suffix,".png"))
+
+pdf(dist_pdf, width = width, height = 6)
 boxplot(log2(int_raw2+1), main = "raw intensity distribution in sample",ylab = "log2 value");
 if(grepl("3",opt$step)) boxplot(log2(int_genefilter2+1), main = "gene filter data distribution in sample",ylab = "log2 value");
 if(grepl("4",opt$step)) boxplot(log2(int_norm2+1), main = "normalization data distribution in sample",ylab = "log2 value");
@@ -470,7 +676,135 @@ if(grepl("3",opt$step)) try(densityplot(int_genefilter,"gene filter data",savefi
 if(grepl("4",opt$step)) try(densityplot(int_norm,"normalization data",savefile = FALSE))
 dev.off()
 
+# Save as PNG - separate files for each plot (to assets directory)
+# Boxplots
+boxplot_raw_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_raw",step_suffix,".png"))
+png(boxplot_raw_png, width = width*300, height = 6*300, res = 300)
+boxplot(log2(int_raw2+1), main = "raw intensity distribution in sample",ylab = "log2 value")
+dev.off()
+
+if(grepl("3",opt$step)) {
+  boxplot_filter_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_filter",step_suffix,".png"))
+  png(boxplot_filter_png, width = width*300, height = 6*300, res = 300)
+  boxplot(log2(int_genefilter2+1), main = "gene filter data distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+if(grepl("4",opt$step)) {
+  boxplot_norm_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_norm",step_suffix,".png"))
+  png(boxplot_norm_png, width = width*300, height = 6*300, res = 300)
+  boxplot(log2(int_norm2+1), main = "normalization data distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+if(grepl("5",opt$step)) {
+  boxplot_int_png <- file.path(assets_dir, paste0(opt$output,"_step1_box_int",step_suffix,".png"))
+  png(boxplot_int_png, width = width*300, height = 6*300, res = 300)
+  boxplot(int_INT2, main = "INT normalization data distribution in sample",ylab = "value")
+  dev.off()
+}
+
+# Density evaluation plots
+density_eval_raw_png <- file.path(assets_dir, paste0(opt$output,"_step1_density_eval_raw",step_suffix,".png"))
+png(density_eval_raw_png, width = 12*300, height = 10*300, res = 300)
+try(densityplot(int_raw,"raw data",savefile = FALSE,verbose = 1))
+dev.off()
+
+if(grepl("3",opt$step)) {
+  density_eval_filter_png <- file.path(assets_dir, paste0(opt$output,"_step1_density_eval_filter",step_suffix,".png"))
+  png(density_eval_filter_png, width = 12*300, height = 10*300, res = 300)
+  try(densityplot(int_genefilter,"gene filter data",savefile = FALSE))
+  dev.off()
+}
+
+if(grepl("4",opt$step)) {
+  density_eval_norm_png <- file.path(assets_dir, paste0(opt$output,"_step1_density_eval_norm",step_suffix,".png"))
+  png(density_eval_norm_png, width = 12*300, height = 10*300, res = 300)
+  try(densityplot(int_norm,"normalization data",savefile = FALSE))
+  dev.off()
+}
+
+### Report: Plots Section ####
+cat("## Generated Plots\n\n", file = report_file, append = TRUE)
+
+# PCA Plots section - check if covar was available
+if(!pca_covar_available) {
+  cat("### PCA Plots\n\n", file = report_file, append = TRUE)
+  if(opt$step == "3") {
+    cat("*PCA plots were not generated because step 3 (gene filter) does not produce PCA visualization.*\n\n", file = report_file, append = TRUE)
+  } else {
+    cat("*PCA plots were not generated because covariate information (covar) is not available. PCA plots require sample metadata for visualization.*\n\n", file = report_file, append = TRUE)
+  }
+} else {
+  pca_plot_files <- list.files(assets_dir, pattern = paste0(opt$output, "_step1_pca_.*\\.png$"), full.names = FALSE)
+  if(length(pca_plot_files) > 0) {
+    cat("### PCA Plots\n\n", file = report_file, append = TRUE)
+    # Define the desired order for stages
+    stage_order <- c("raw", "rm", "norm", "INT")
+    # Sort files by stage order
+    pca_plot_files_sorted <- pca_plot_files[order(match(gsub(paste0(opt$output, "_step1_pca_([a-zA-Z]+)_.*"), "\\1", pca_plot_files), stage_order))]
+    for(png_file in pca_plot_files_sorted) {
+      cat("![PCA Plot](assets/", png_file, ")\n\n", sep = "", file = report_file, append = TRUE)
+    }
+  }
+}
+
+cat("### Sample Boxplot\n\n", file = report_file, append = TRUE)
+boxplot_png_files <- list.files(assets_dir, pattern = paste0(opt$output, "_step1_box_.*\\.png$"), full.names = FALSE)
+if(length(boxplot_png_files) > 0) {
+  for(png_file in sort(boxplot_png_files)) {
+    cat("![Sample Boxplot](assets/", png_file, ")\n\n", sep = "", file = report_file, append = TRUE)
+  }
+} else {
+  cat("Boxplot plots are saved as separate PNG files:\n\n", file = report_file, append = TRUE)
+  cat("- ", opt$output, "_step1_box_raw",step_suffix,".png (Raw data)\n", sep = "", file = report_file, append = TRUE)
+  if(grepl("3",opt$step)) cat("- ", opt$output, "_step1_box_filter",step_suffix,".png (Gene filtered)\n", sep = "", file = report_file, append = TRUE)
+  if(grepl("4",opt$step)) cat("- ", opt$output, "_step1_box_norm",step_suffix,".png (Normalized)\n", sep = "", file = report_file, append = TRUE)
+  if(grepl("5",opt$step)) cat("- ", opt$output, "_step1_box_int",step_suffix,".png (INT normalized)\n", sep = "", file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+cat("### Gene Density Plot\n\n", file = report_file, append = TRUE)
+density_png_files <- list.files(assets_dir, pattern = paste0(opt$output, "_step1_density_.*\\.png$"), full.names = FALSE)
+if(length(density_png_files) > 0) {
+  for(png_file in sort(density_png_files)) {
+    cat("![Gene Density Plot](assets/", png_file, ")\n\n", sep = "", file = report_file, append = TRUE)
+  }
+} else {
+  cat("Density evaluation plots are saved as separate PNG files:\n\n", file = report_file, append = TRUE)
+  cat("- ", opt$output, "_step1_density_eval_raw",step_suffix,".png (Raw data)\n", sep = "", file = report_file, append = TRUE)
+  if(grepl("3",opt$step)) cat("- ", opt$output, "_step1_density_eval_filter",step_suffix,".png (Gene filtered)\n", sep = "", file = report_file, append = TRUE)
+  if(grepl("4",opt$step)) cat("- ", opt$output, "_step1_density_eval_norm",step_suffix,".png (Normalized)\n", sep = "", file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+### Report: Output Files Summary ####
+cat("## Output Files Summary\n\n", file = report_file, append = TRUE)
+cat("| File | Description |\n", file = report_file, append = TRUE)
+cat("|------|-------------|\n", file = report_file, append = TRUE)
+
+if(grepl("2",opt$step)) {
+  cat("| `", paste0(opt$output,"_rmOut.RData"), "` | Data after outlier removal |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("3",opt$step)) {
+  cat("| `", paste0(opt$output,"_filter",if(grepl("2",opt$step)) "_rmOut" else "",".RData"), "` | Data after gene filtering |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("4",opt$step)) {
+  norm_suffix <- paste0("_filter",if(grepl("2",opt$step)) "_rmOut" else "","_",opt$norm.method)
+  cat("| `", paste0(opt$output,norm_suffix,".RData"), "` | Normalized data (", opt$norm.method, ") |\n", sep = "", file = report_file, append = TRUE)
+  cat("| `", paste0(opt$output,"_log_",opt$norm.method,".RData"), "` | Log2 transformed normalized data |\n", sep = "", file = report_file, append = TRUE)
+}
+if(grepl("5",opt$step)) {
+  cat("| `", paste0(opt$output,savedname,"_INT.RData"), "` | INT transformed data (for QTL) |\n", sep = "", file = report_file, append = TRUE)
+}
+if("covar" %in% ls() && opt$step != "3") {
+  cat("| `", paste0(opt$output,"_step1_pca.RData"), "` | PCA results |\n", sep = "", file = report_file, append = TRUE)
+}
+cat("\n", file = report_file, append = TRUE)
+
+cat("---\n\n**Analysis completed successfully.**\n\n", file = report_file, append = TRUE)
+cat("*Report generated by quantWF step1_countTPM v2.1*\n", file = report_file, append = TRUE)
+
 cat("\n")
 cat(step1r_final_rec)
 cat("--- step1_countTPM all finished ---\n")
-

@@ -1,10 +1,11 @@
-#Version: 1.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2022
+#Date: March 25, 2026
 #Software: R
 #20250717 fixed limma and edgeR have ctl/ind log2FC
 #20250918 add loginfo and message in last, and fix DESeq2 DEG extract error
+#V2.1: 添加outputdir参数支持指定输出目录
 
 #######
 #log2FCcut = 1; adjPcut = 0.05;
@@ -24,6 +25,10 @@ if(!"covar" %in% allobj) stop("No covar obj, see readme document.");
 if(!"output" %in% allobj) {
   output = "data";
   message("no output, setting to 'data' as prefix")
+}
+if(!"outputdir" %in% allobj) {
+  outputdir = ".";
+  message("no outputdir, setting to current directory")
 }
 if(!"grpname" %in% allobj) {
   grpname = "group"; message("Setting grpname as default: group.")}
@@ -220,12 +225,12 @@ for(i in seq_along(groupB)){
 
 ##save ########
 save(limma_result,edgeR_result,DESeq2_result,
-     file = paste0(output,"_DEG_troika.RData"))
+     file = file.path(outputdir, paste0(output,"_DEG_troika.RData")))
 save(limma_result_all,edgeR_result_all,DESeq2_result_all,
-     file = paste0(output,"_stat_troika.RData"))
+     file = file.path(outputdir, paste0(output,"_stat_troika.RData")))
 
 loginfo <- paste(loginfo,
-                 "   saved in",paste0(output,"_stat_troika.RData\n"))
+                 "   saved in",file.path(outputdir, paste0(output,"_stat_troika.RData")),"\n")
 cat("************************************\n")
 cat(loginfo)
 cat("************************************\n")

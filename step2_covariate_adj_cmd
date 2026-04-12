@@ -1,10 +1,11 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
-#Software: R
+#Date: March 25, 2026
 #250919 add PCA to find hidden covariate methods
 #250919 add BIC, and evaluate_method parameter: pvca,pca,BIC or both
+#V2.1: 添加outputdir参数支持指定输出目录
+#260325 changed to Markdown report format, added PNG output for plots
 
 #covar can be NULL
 #quantfile must be RData or csv file. 
@@ -24,6 +25,8 @@ option_list = list(
               type='character',help="meta file path"),
   make_option("--output", action="store", default=NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default=NA,
+              type='character',help="output directory path, default is current directory"),
   make_option("--funcdir", action="store", default=NA,
               type='character',help="preprocess function file path"),
   make_option("--keepvar", action="store", default=NA,
@@ -53,7 +56,15 @@ rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","loginfo","existpck
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0.1 parameters evaluate ######
-if(!dir.exists("plot")) dir.create("plot")
+#V2.1: 使用outputdir参数创建plot目录
+if(is.na(opt$outputdir)) {
+  opt$outputdir = "."; message("Setting outputdir as default: current directory.")
+}
+if(!dir.exists(opt$outputdir)) dir.create(opt$outputdir, recursive = TRUE)
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
@@ -101,7 +112,6 @@ if(is.na(opt$evaluate_method)) {
 if(is.na(opt$BIC_cores)) {
   opt$BIC_cores = 30; message("Setting BIC_cores as default: 30.")}
 
-# opt$nfactor will check in peer section
 ### 0.2 read quant & covar info ####
 #no quantfile should have quant obj
 if(is.na(opt$quantfile)) {
@@ -137,6 +147,178 @@ otherobj <- ls();
 otherobj <- otherobj[!otherobj %in% c("rmobj",rmobj)]
 otherobj <- otherobj[!sapply(otherobj, function(x) is.function(get(x)))]
 if(!"loginfo" %in% ls()) loginfo = list();
+
+### Helper function: Find input report based on quantfile ####
+find_input_report <- function(quantfile, outputdir, report_info = NULL) {
+  if(is.na(quantfile) || !file.exists(quantfile)) {
+    if(!is.null(report_info)) {
+      report_info$step1_report_search <- "Quantfile not provided or does not exist"
+    }
+    return(list(report_path = NULL, report_info = report_info))
+  }
+  # Extract base name from quantfile (remove .RData extension)
+  base_name <- sub("\\.RData$", "", basename(quantfile))
+  # Also try removing common step1 suffixes
+  base_name_alt <- sub("(_filter|_norm|_TMM|_quantile|_rmOut|_log|_INT|_step1).*", "", base_name)
+  
+  # Possible report file patterns
+  possible_reports <- c(
+    file.path(outputdir, paste0(base_name, "_step1_report.md")),
+    file.path(outputdir, paste0(base_name, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_step1_report.md")),
+    file.path(dirname(quantfile), paste0(base_name, "_report.md")),
+    # Alternative base names
+    file.path(outputdir, paste0(base_name_alt, "_step1_report.md")),
+    file.path(outputdir, paste0(base_name_alt, "_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_step1_report.md")),
+    file.path(dirname(quantfile), paste0(base_name_alt, "_report.md"))
+  )
+  
+  # Remove duplicates
+  possible_reports <- unique(possible_reports)
+  
+  # Record search info
+  search_info <- paste0("Searching for step1 report based on quantfile: `", quantfile, "`\n\n")
+  search_info <- paste0(search_info, "Base names tried: `", base_name, "`, `", base_name_alt, "`\n\n")
+  search_info <- paste0(search_info, "Possible report paths checked:\n")
+  
+  for(report_path in possible_reports) {
+    exists_flag <- file.exists(report_path)
+    search_info <- paste0(search_info, "- `", report_path, "` ", ifelse(exists_flag, "✓ Found", "✗ Not found"), "\n")
+    if(exists_flag) {
+      message("Found step1 report: ", report_path)
+      if(!is.null(report_info)) {
+        report_info$step1_report_search <- search_info
+        report_info$step1_report_found <- report_path
+      }
+      return(list(report_path = report_path, report_info = report_info))
+    }
+  }
+  
+  message("No step1 report found for: ", quantfile)
+  if(!is.null(report_info)) {
+    report_info$step1_report_search <- search_info
+    report_info$step1_report_found <- NULL
+  }
+  return(list(report_path = NULL, report_info = report_info))
+}
+
+# First, check if input data has report_file from previous step (before defining step2 report_file)
+loaded_report_file <- NULL
+prev_step <- NULL
+input_report_file <- NULL
+if("report_file" %in% otherobj && exists("report_file")) {
+  loaded_report_file <- get("report_file")
+  message("Loaded report_file from input data: ", loaded_report_file)
+  if(grepl("step1", loaded_report_file)) {
+    prev_step <- "step1"
+    message("Detected step1 report from input data")
+  } else if(grepl("step2", loaded_report_file)) {
+    prev_step <- "step2"
+    message("Detected step2 report from input data")
+  }
+}
+
+# Initialize report info to track step1 report search
+report_info <- list()
+
+### Initialize Markdown Report ####
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step2_report.md"))
+
+# If no loaded report, try to find report from input quantfile
+if(is.null(prev_step) && !is.na(opt$quantfile)) {
+  message("Looking for step1 report based on quantfile: ", opt$quantfile)
+  find_result <- find_input_report(opt$quantfile, opt$outputdir, report_info)
+  input_report_file <- find_result$report_path
+  report_info <- find_result$report_info
+  if(!is.null(input_report_file)) {
+    prev_step <- "step1"  # Assume step1 if found from quantfile
+    message("Found step1 report at: ", input_report_file)
+  }
+} else {
+  if(is.na(opt$quantfile)) {
+    report_info$step1_report_search <- "No quantfile provided, cannot search for step1 report"
+    report_info$step1_report_found <- NULL
+  } else if(prev_step == "step1") {
+    report_info$step1_report_search <- paste0("Step1 report loaded from input data: `", loaded_report_file, "`")
+    report_info$step1_report_found <- loaded_report_file
+  } else if(prev_step == "step2") {
+    report_info$step1_report_search <- paste0("Note: Input data contains a step2 report (`", loaded_report_file, "`), not a step1 report. Searching for step1 report separately...")
+    report_info$step1_report_found <- NULL
+  }
+}
+
+# Determine action based on previous step
+if(!is.null(prev_step)) {
+  # Determine which report file to use for linking
+  link_report_file <- if(!is.null(loaded_report_file) && file.exists(loaded_report_file)) {
+    loaded_report_file
+  } else if(!is.null(input_report_file) && file.exists(input_report_file)) {
+    input_report_file
+  } else {
+    NULL
+  }
+  
+  if(prev_step == "step1" && !is.null(link_report_file)) {
+    # Reference step1 report
+    report_lines <- c()
+    report_lines <- c(report_lines, "# Step 2: Covariate Adjustment Report")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Previous Step Report:** [Step 1 Report](", basename(link_report_file), ")"))
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Input File:** `", opt$quantfile, "`"))
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+    report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+    report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+    report_lines <- c(report_lines, paste0("**Adjustment mode:** ", opt$adjcov))
+    report_lines <- c(report_lines, paste0("**Hidden factor method:** ", opt$method))
+    report_lines <- c(report_lines, "")
+    writeLines(report_lines, report_file)
+  } else if(prev_step == "step2" && !is.null(link_report_file)) {
+    # Check if link_report_file and report_file are the same
+    if(normalizePath(link_report_file) == normalizePath(report_file)) {
+      # Same file, just append new section
+      cat("\n---\n\n", file = report_file, append = TRUE)
+      cat("## Step 2: Covariate Adjustment (Additional Run)\n\n", file = report_file, append = TRUE)
+      cat(paste0("**Date:** ", Sys.time(), "\n\n"), file = report_file, append = TRUE)
+      cat(paste0("**Adjustment mode:** ", opt$adjcov, "\n\n"), file = report_file, append = TRUE)
+      cat(paste0("**Hidden factor method:** ", opt$method, "\n\n"), file = report_file, append = TRUE)
+    } else {
+      # Different files, copy and append
+      file.copy(link_report_file, report_file, overwrite = TRUE)
+      cat("\n---\n\n", file = report_file, append = TRUE)
+      cat("## Step 2: Covariate Adjustment (Additional Run)\n\n", file = report_file, append = TRUE)
+      cat(paste0("**Date:** ", Sys.time(), "\n\n"), file = report_file, append = TRUE)
+      cat(paste0("**Adjustment mode:** ", opt$adjcov, "\n\n"), file = report_file, append = TRUE)
+      cat(paste0("**Hidden factor method:** ", opt$method, "\n\n"), file = report_file, append = TRUE)
+    }
+  } else {
+    # Create new report without link
+    report_lines <- c()
+    report_lines <- c(report_lines, "# Step 2: Covariate Adjustment Report")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+    report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+    report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+    report_lines <- c(report_lines, paste0("**Adjustment mode:** ", opt$adjcov))
+    report_lines <- c(report_lines, paste0("**Hidden factor method:** ", opt$method))
+    report_lines <- c(report_lines, "")
+    writeLines(report_lines, report_file)
+  }
+} else {
+  # Create new report
+  report_lines <- c()
+  report_lines <- c(report_lines, "# Step 2: Covariate Adjustment Report")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+  report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+  report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+  report_lines <- c(report_lines, paste0("**Adjustment mode:** ", opt$adjcov))
+  report_lines <- c(report_lines, paste0("**Hidden factor method:** ", opt$method))
+  report_lines <- c(report_lines, "")
+  writeLines(report_lines, report_file)
+}
 
 ### 0.3 obj check (covar can be NULL) ###########
 pct_threshold <- 0.6
@@ -216,7 +398,6 @@ if(!is.null(covar) & !is.null(opt$keepvar)) {
     covar <- covar[,c(pos,(1:ncol(covar))[-pos])]
   }
 } 
-if(!"./plot" %in% list.dirs()) {dir.create("plot")}
 ### 1. obs cov adjust #########
 cat('-----data preprocess 2 covariate adjust----- \n')
 #quant_raw  quant1(after step1) covar1(after step1)
@@ -299,7 +480,7 @@ if(!is.null(covar)) {
                                     "covar correlation is plotted. \n ",
                                     "pvca before and after obs cov adjust and pca after obs adjust is plotted. \n "),
                     input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                    output = paste0(opt$output,"_adj_obs.RData"),
+                    output = file.path(opt$outputdir, paste0(opt$output,"_adj_obs.RData")),
                     sessionInfo = sessionInfo(),
                     srcipt = "step2_covariate_adj v2.0", parameter = opt,
                     running_time = Sys.time())
@@ -307,9 +488,9 @@ if(!is.null(covar)) {
     #obs save it as quant_final else quant_adj_obs
     if(opt$adjcov == "obs") { 
       quant = quant_adj_obs; 
-      loginfo$step2_cov_adj_obs$output <- paste0(opt$output,"_adj_final.RData")
-      save(quant, covar,loginfo,list = otherobj, file = paste0(opt$output,"_adj_final.RData")) 
-    } else save(quant,covar,loginfo,list = otherobj,file = paste0(opt$output,"_adj_obs.RData")) 
+      loginfo$step2_cov_adj_obs$output <- file.path(opt$outputdir, paste0(opt$output,"_adj_final.RData"))
+      save(quant, covar,loginfo,report_file,list = otherobj, file = file.path(opt$outputdir, paste0(opt$output,"_adj_final.RData"))) 
+    } else save(quant,covar,loginfo,report_file,list = otherobj,file = file.path(opt$outputdir, paste0(opt$output,"_adj_obs.RData"))) 
     quant1 <- quant_adj_obs;
   }
 }
@@ -392,7 +573,15 @@ if(opt$adjcov != "obs" ) {
       Variance = apply(factors,2,var);
       Variance<-sort(Variance, decreasing=TRUE); 
       Variance<-100*Variance/sum(Variance)
-      pdf(paste0("plot/peer_variance_factor_",opt$output,".pdf"),width=5,height=5)
+      
+      peer_pdf <- file.path(plot_dir, paste0("peer_variance_factor_",opt$output,".pdf"))
+      peer_png <- file.path(plot_dir, paste0("peer_variance_factor_",opt$output,".png"))
+      
+      pdf(peer_pdf,width=5,height=5)
+      plot(Variance,type="o",pch=19,col="red",xlab="Factors")
+      dev.off()
+      
+      png(peer_png,width=500,height=500,res=150)
       plot(Variance,type="o",pch=19,col="red",xlab="Factors")
       dev.off()
     }
@@ -418,10 +607,20 @@ if(opt$adjcov != "obs" ) {
     resultRunBE<-runBE(expr,B=25,alpha=0.05,mc.cores=1)
     #print(resultRunBE$numOfPCsChosen)
     K_BE<-resultRunBE$numOfPCsChosen 
-    pdf(paste0("plot/PCA_variance_factor_",opt$output,".pdf"),width=5,height=5)
-    makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
-                  titleText=opt$output)
+    
+    pca_var_pdf <- file.path(plot_dir, paste0("PCA_variance_factor_",opt$output,".pdf"))
+    pca_var_png <- file.path(plot_dir, paste0("PCA_variance_factor_",opt$output,".png"))
+    
+    pdf(pca_var_pdf,width=5,height=5)
+    print(makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
+                  titleText=opt$output))
     dev.off()
+    
+    png(pca_var_png,width=500,height=500,res=150)
+    print(makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
+                  titleText=opt$output))
+    dev.off()
+    
     if(opt$nPCAchoose=="BE") PCsTop<-PCs[,1:K_BE] #default is choose K_BE
     if(opt$nPCAchoose=="Elbow") PCsTop<-PCs[,1:K_elbow]
     if(!is.null(covar)){
@@ -459,7 +658,7 @@ if(opt$adjcov != "obs" ) {
                         srcipt = "step2_covariate_adj v2.0", parameter = opt,
                         running_time = Sys.time())
     loginfo = c(loginfo, step2_cov_adj_error = list(loginfoerror))
-    save(covar_hid,loginfo, file = paste0("covar_hid_",opt$output,".RData"))
+    save(covar_hid,loginfo, file = file.path(opt$outputdir, paste0("covar_hid_",opt$output,".RData")))
     stop(paste0("cannot solve beta, just save hidden factor in covar_hid_",opt$output,".RData"))
   }
   if(!is.null(opt$keepvar)) {
@@ -482,15 +681,15 @@ if(opt$adjcov != "obs" ) {
                                   "covar included hidden covariance correlation is plotted. \n ",
                                   "pvca before and after obs cov adjust and pca after obs adjust is plotted. \n "),
                   input = if(is.na(opt$covarfile)) opt$quantfile else paste(opt$quantfile,"and",opt$covarfile),
-                  output = paste0(opt$output,"_adj_final.RData"),
+                  output = file.path(opt$outputdir, paste0(opt$output,"_adj_final.RData")),
                   packageVersion =if(opt$method == "sva") paste("sva",packageVersion("sva")) else if(opt$method == "peer") paste("peer",packageVersion("peer")),
                   sessionInfo = sessionInfo(),
                   srcipt = "step2_covariate_adj v2.0", parameter = opt,
                   running_time = Sys.time())
   loginfo = c(loginfo, step2_cov_adj = list(loginfo2))
   
-  save(quant, covar_hid, covar,loginfo,list = otherobj,
-       file = paste0(opt$output,"_adj_final.RData")) #230201 updated
+  save(quant, covar_hid, covar,loginfo,report_file,list = otherobj,
+       file = file.path(opt$outputdir, paste0(opt$output,"_adj_final.RData"))) #230201 updated
 }
 
 ###  covariants correlation #######
@@ -519,8 +718,26 @@ if(!is.null(covar) | !is.null(covar_hid)) {
   col2 <- colorRampPalette(c("#053061","#2166AC","#4393C3","#92C5DE",
                              "#D1E5F0", "#FFFFFF","#FDDBC7","#F4A582",
                              "#D6604D","#B2182B","#67001F"))
-  pdf(file = paste0("plot/",opt$output,"_",opt$method,"_cov_cor.pdf"),
-      width = 10, height = 10)
+  
+  cor_pdf <- file.path(plot_dir, paste0(opt$output,"_step2_",opt$method,"_cov_cor.pdf"))
+  cor_png <- file.path(assets_dir, paste0(opt$output,"_step2_",opt$method,"_cov_cor.png"))
+  
+  # Save as PDF
+  pdf(cor_pdf, width = 10, height = 10)
+  if(!is.null(covar))
+    if(ncol(covar) != 1)
+      corrplot(cor(covar2),p.mat = cor.mtest(covar2)$p, col = col2(200),
+               insig = "p-value", order = "original",method = "ellipse",
+               type = "lower", tl.pos = "d")
+  if(!is.null(covar_hid))
+    if(ncol(covar_hid) != 1)
+      corrplot(cor(covar_hid2),p.mat = cor.mtest(covar_hid2)$p, col = col2(200),
+               insig = "p-value", order = "original",method = "ellipse",
+               type = "lower", tl.pos = "d")
+  dev.off()
+  
+  # Save as PNG
+  png(cor_png, width = 1000, height = 1000, res = 150)
   if(!is.null(covar))
     if(ncol(covar) != 1)
       corrplot(cor(covar2),p.mat = cor.mtest(covar2)$p, col = col2(200),
@@ -533,35 +750,64 @@ if(!is.null(covar) | !is.null(covar_hid)) {
                type = "lower", tl.pos = "d")
   dev.off()
 }
+
 ###  pvca  ########
 if(grepl("pvca|PVCA",opt$evaluate_method)) {
-  plotpdfname = paste0("-adj_",opt$adjcov)
+  plotpdfname = paste0("_step2_",opt$adjcov)
   pvcalist <- list(adjust_before =quant_raw,
                    adjust_observed = quant1,
                    adjust_hidden = quant)
   if(opt$adjcov == "obs") pvcalist <- pvcalist[-3]
   if(opt$adjcov == "obs&hid") pvcalist <- pvcalist[-2] 
-  if("lme4" %in% existpck) { #pvca
+  
+  # V2.1: Check data validity before PVCA
+  valid_pvcadata <- TRUE
+  for(ii in names(pvcalist)) {
+    if(is.null(pvcalist[[ii]]) || nrow(pvcalist[[ii]]) == 0 || ncol(pvcalist[[ii]]) == 0) {
+      message(paste0("pvcadata '", ii, "' is empty or NULL, skipping PVCA plot."))
+      valid_pvcadata <- FALSE
+    }
+  }
+  
+  if("lme4" %in% existpck && valid_pvcadata) { #pvca
     if(!is.null(covar)) {
       cat("- Draw pvca plot - \n")
       if(ncol(covar) > 0) {
-        pdf(paste0("plot/",opt$output,plotpdfname,"_pvca.pdf"),width = 12,height = 6)
+        pvca_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pvca.pdf"))
+        pvca_png <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pvca.png"))
+        
+        # Save as PDF
+        pdf(pvca_pdf,width = 12,height = 6)
+        pvcaresult_list <- list()
         for(ii in names(pvcalist)) {
           suppressMessages(pvcaresult <- pvca_evaluate(pvcalist[[ii]],covar, pct_threshold = 0.6,output = ii))
-          pvcalist[[ii]] <- pvcaresult$pvca_res
+          pvcaresult_list[[ii]] <- pvcaresult$pvca_res
           print(pvcaresult$pic)
         }
         dev.off()
-        save(pvcalist,file = paste0(opt$output,plotpdfname,"_PVCA.RData") )
+        
+        # Save as PNG (reuse results from PDF loop)
+        png(pvca_png,width = 1200,height = 600,res = 150)
+        for(ii in names(pvcalist)) {
+          suppressMessages(pvcaresult <- pvca_evaluate(pvcalist[[ii]],covar, pct_threshold = 0.6,output = ii))
+          print(pvcaresult$pic)
+        }
+        dev.off()
+        
+        save(pvcaresult_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_PVCA.RData")) )
         message("pvca plot was finished.") 
-      }
-    }
-  } else  cat(" - no lme4 pcakge, not draw PVCA plot.- \n")
+      }  # end if(ncol(covar) > 0)
+    }  # end if(!is.null(covar))
+  } else if(!valid_pvcadata) {
+    message(" - PVCA skipped due to invalid data.")
+  } else {
+    cat(" - no lme4 package, not draw PVCA plot.- \n")
+  }
 }
 
 ###  pca #########
 if(grepl("pca|PCA",opt$evaluate_method)) {
-  plotpdfname = paste0("-adj_",opt$adjcov)
+  plotpdfname = paste0("_step2_",opt$adjcov)
   pca_list <- list(adjust_before =quant_raw,
                    adjust_observed = quant1,
                    adjust_hidden = quant)
@@ -577,9 +823,14 @@ if(grepl("pca|PCA",opt$evaluate_method)) {
       } else pca_list[[i]] <- pca_dat(pca_list[[i]])
     }
     message("PCA is calcluated.")
-    save(covar,pca_list,file = paste0(opt$output,plotpdfname,"_pca.RData"))
+    save(covar,pca_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_pca.RData")))
     message("pca result was saved.")
-    pdf(paste0("plot/",opt$output,plotpdfname,"_pcaplot.pdf"), width = 10, height = 8)
+    
+    pca_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pca.pdf"))
+    pca_png <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pca.png"))
+    
+    # Save as PDF
+    pdf(pca_pdf, width = 10, height = 8)
     for(i in names(pca_list)) {
       pcadata <- pca_list[[i]]
       if(!is.null(pcadata)) {
@@ -589,9 +840,22 @@ if(grepl("pca|PCA",opt$evaluate_method)) {
       }
     }
     dev.off()
+    
+    # Save as PNG - each plot as separate file
+    for(i in names(pca_list)) {
+      pcadata <- pca_list[[i]]
+      if(!is.null(pcadata)) {
+        if(inherits(pcadata,"prcomp")) {
+          pca_png_file <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pca_",i,".png"))
+          pca_plot_var(pcadata, covar, title = i, filename = pca_png_file)
+        } else 
+          warning(paste0(i, "step data run pca have error."))
+      }
+    }
+    
     message("pca plot was finished.") 
   } else cat(" - covar is NULL, will not draw PCA plot.- \n")
-} 
+}
 
 ### boxplot ############
 cat("- Draw boxplot/density plot - \n")
@@ -608,7 +872,12 @@ if(ncol(quant) > 50) {message("Samples large than 50, random pick 50 sample to d
   if(opt$adjcov %in% c("obs","obs+hid"))  quant1_1<- quant1
   if(grepl("hid",opt$adjcov)) quant2_1 <- quant
 }
-pdf(paste0("plot/",opt$output,"_adj_sample&gene distribution.pdf"),width = width,height = 6)
+
+dist_pdf <- file.path(plot_dir, paste0(opt$output,"_step2_distribution.pdf"))
+dist_png <- file.path(plot_dir, paste0(opt$output,"_step2_distribution.png"))
+
+# Save as PDF
+pdf(dist_pdf,width = width,height = 6)
 boxplot(quant_1, main = "adj before data distribution in sample",ylab = "log2 value");
 if(opt$adjcov %in% c("obs","obs+hid")) boxplot(quant1_1,main = "adjust observed data distribution in sample",ylab = "log2 value");
 if(grepl("hid",opt$adjcov)) boxplot(quant2_1, main = "adjust final data distribution in sample",ylab = "log2 value");
@@ -617,9 +886,88 @@ if(opt$adjcov %in% c("obs","obs+hid")) try(densityplot(quant1,"adj observed",sav
 if(grepl("hid",opt$adjcov)) try(densityplot(quant,"adj final",savefile = FALSE))
 dev.off()
 
+# Save as PNG - separate files for each plot
+# Boxplots
+boxplot_before_png <- file.path(assets_dir, paste0(opt$output,"_step2_box_before.png"))
+png(boxplot_before_png, width = width*100, height = 600, res = 150)
+boxplot(quant_1, main = "adj before data distribution in sample",ylab = "log2 value")
+dev.off()
+
+if(opt$adjcov %in% c("obs","obs+hid")) {
+  boxplot_obs_png <- file.path(assets_dir, paste0(opt$output,"_step2_box_observed.png"))
+  png(boxplot_obs_png, width = width*100, height = 600, res = 150)
+  boxplot(quant1_1,main = "adjust observed data distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+if(grepl("hid",opt$adjcov)) {
+  boxplot_final_png <- file.path(assets_dir, paste0(opt$output,"_step2_box_final.png"))
+  png(boxplot_final_png, width = width*100, height = 600, res = 150)
+  boxplot(quant2_1, main = "adjust final data distribution in sample",ylab = "log2 value")
+  dev.off()
+}
+
+# Density evaluation plots
+# V2.1: Helper function to safely generate density plot
+safe_densityplot <- function(data, title, png_path, ...) {
+  png(png_path, width = 12*300, height = 10*300, res = 300)
+  plot_success <- tryCatch({
+    densityplot(data, title, savefile = FALSE, ...)
+    TRUE
+  }, error = function(e) {
+    message("Density plot failed for '", title, "': ", e$message)
+    FALSE
+  })
+  dev.off()
+  # Remove empty/invalid PNG file if plot failed
+  if(!plot_success && file.exists(png_path)) {
+    file.remove(png_path)
+    return(NULL)
+  }
+  return(if(plot_success) png_path else NULL)
+}
+
+density_plot_files <- list()
+density_plot_files$before <- safe_densityplot(quant_raw, "adj before", 
+                                               file.path(assets_dir, paste0(opt$output,"_step2_density_before.png")))
+
+if(opt$adjcov %in% c("obs","obs+hid")) {
+  density_plot_files$observed <- safe_densityplot(quant1, "adj observed",
+                                                   file.path(assets_dir, paste0(opt$output,"_step2_density_observed.png")))
+}
+
+if(grepl("hid",opt$adjcov)) {
+  density_plot_files$final <- safe_densityplot(quant, "adj final",
+                                                file.path(assets_dir, paste0(opt$output,"_step2_density_final.png")))
+}
+
 ### BIC #######
 if(grepl("bic|BIC",opt$evaluate_method)) {
-  plotpdfname = paste0("-adj_",opt$adjcov)
+  # V2.1: Check data validity before BIC
+  valid_bicdata <- TRUE
+  if(!exists("quant_raw") || is.null(quant_raw) || nrow(quant_raw) == 0 || ncol(quant_raw) == 0) {
+    message("quant_raw is not available or empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(is.null(covar) || nrow(covar) == 0) {
+    message("covar is empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  }
+  # Check specific quant objects based on adjcov
+  if(valid_bicdata && opt$adjcov %in% c("obs", "obs&hid", "obs+hid")) {
+    if(!exists("quant1") || is.null(quant1) || nrow(quant1) == 0 || ncol(quant1) == 0) {
+      message("quant1 (observed adjusted) is not available or empty, skipping BIC plot.")
+      valid_bicdata <- FALSE
+    }
+  }
+  if(valid_bicdata && opt$adjcov %in% c("hid", "obs&hid", "obs+hid")) {
+    if(!exists("quant") || is.null(quant) || nrow(quant) == 0 || ncol(quant) == 0) {
+      message("quant (hidden adjusted) is not available or empty, skipping BIC plot.")
+      valid_bicdata <- FALSE
+    }
+  }
+  
+  if(valid_bicdata) {
+  plotpdfname = paste0("_step2_",opt$adjcov)
   BIClist <- list(adjust_before =quant_raw,
                   adjust_observed = quant1,
                   adjust_hidden = quant)
@@ -627,17 +975,260 @@ if(grepl("bic|BIC",opt$evaluate_method)) {
   if(opt$adjcov == "obs&hid") BIClist <- BIClist[-2] 
   
   cat("- Draw BIC plot - \n")
-  pdf(paste0("plot/",opt$output,plotpdfname,"_bic.pdf"),width = 12,height = 6)
+    cat("Note: BIC evaluation may take a long time depending on the number of features and cores used.\n")
+  
+  bic_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_bic.pdf"))
+  
+  # Save as PDF
+  pdf(bic_pdf,width = 12,height = 6)
+  BICresult_list <- list()
   for(i in names(BIClist)) {
     BICresult <- BIC_evaluate(BIClist[[i]],covar,num_cores = opt$BIC_cores,output = paste0("BIC estimation (",i,")"))
-    BIClist[[i]] <- BICresult$BICres
+    BICresult_list[[i]] <- BICresult$BICres
     print(BICresult$pic)
   }
   dev.off()
-  save(BIClist,file = paste0(opt$output,plotpdfname,"_BIC.RData") )
-  message("BIC plot was finished.") 
   
+  # Save as PNG - separate files for each plot
+  for(i in names(BIClist)) {
+    bic_png_file <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_bic_",i,".png"))
+    png(bic_png_file,width = 1200,height = 600,res = 150)
+    BICresult <- BIC_evaluate(BIClist[[i]],covar,num_cores = opt$BIC_cores,output = paste0("BIC estimation (",i,")"))
+    print(BICresult$pic)
+    dev.off()
+  }
+  
+  save(BICresult_list,file = file.path(opt$outputdir, paste0(opt$output,plotpdfname,"_BIC.RData")) )
+  message("BIC plot was finished.")
+  }  # end if(valid_bicdata)
+} 
 }
+
+### Generate Markdown Report ####
+plotpdfname = paste0("_step2_",opt$adjcov)
+
+# Read existing report content (header) if it exists
+if(file.exists(report_file)) {
+  existing_content <- readLines(report_file)
+  # Keep everything up to and including the header section (before ## Output Files)
+  output_files_pos <- grep("^## Output Files", existing_content)[1]
+  if(!is.na(output_files_pos)) {
+    report_lines <- existing_content[1:(output_files_pos-1)]
+  } else {
+    report_lines <- existing_content
+  }
+} else {
+  # Create new report with header
+  report_lines <- c()
+  report_lines <- c(report_lines, "# Step 2: Covariate Adjustment Report")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+  report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+  report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+  report_lines <- c(report_lines, paste0("**Adjustment mode:** ", opt$adjcov))
+  report_lines <- c(report_lines, paste0("**Hidden factor method:** ", opt$method))
+  report_lines <- c(report_lines, "")
+}
+
+report_lines <- c(report_lines, "## Output Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Main output:** `", opt$output, "_adj_final.RData`"))
+# Only mention intermediate file if it exists
+if(opt$adjcov %in% c("obs+hid", "obs&hid")) {
+  adj_obs_path <- file.path(opt$outputdir, paste0(opt$output, "_adj_obs.RData"))
+  if(file.exists(adj_obs_path)) {
+    report_lines <- c(report_lines, paste0("- **Intermediate output:** `", opt$output, "_adj_obs.RData`"))
+  }
+}
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Input Information")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Quantification file:** ", ifelse(is.na(opt$quantfile), "Using quant object", opt$quantfile)))
+report_lines <- c(report_lines, paste0("- **Covariate file:** ", ifelse(is.na(opt$covarfile), "Not provided", opt$covarfile)))
+report_lines <- c(report_lines, paste0("- **Number of features:** ", nrow(quant_raw)))
+report_lines <- c(report_lines, paste0("- **Number of samples:** ", ncol(quant_raw)))
+report_lines <- c(report_lines, "")
+
+# Add step1 report search information
+if(exists("report_info") && !is.null(report_info$step1_report_search)) {
+  report_lines <- c(report_lines, "### Step1 Report Search")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, report_info$step1_report_search)
+  report_lines <- c(report_lines, "")
+  if(!is.null(report_info$step1_report_found)) {
+    report_lines <- c(report_lines, paste0("**Step1 Report Found:** [", basename(report_info$step1_report_found), "]", "(", report_info$step1_report_found, ")"))
+  } else {
+    report_lines <- c(report_lines, "**Step1 Report:** Not found")
+  }
+  report_lines <- c(report_lines, "")
+}
+
+report_lines <- c(report_lines, "## Hidden Covariate Discovery")
+report_lines <- c(report_lines, "")
+if(opt$method == "sva") {
+  report_lines <- c(report_lines, paste0("- **Method:** SVA (", opt$svamethod, " method)"))
+  if(exists("n.sv")) {
+    report_lines <- c(report_lines, paste0("- **Number of hidden covariates found:** ", n.sv))
+  }
+} else if(opt$method == "peer") {
+  report_lines <- c(report_lines, "- **Method:** PEER (Probabilistic Estimation of Expression Residuals)")
+  if(exists("nFactor")) {
+    report_lines <- c(report_lines, paste0("- **Number of factors:** ", nFactor))
+  }
+} else if(opt$method == "pca") {
+  report_lines <- c(report_lines, "- **Method:** PCA-based hidden covariate extraction")
+  report_lines <- c(report_lines, paste0("- **PC selection method:** ", opt$nPCAchoose))
+  if(exists("K_BE")) {
+    report_lines <- c(report_lines, paste0("- **PCs selected by BE method:** ", K_BE))
+  }
+  if(exists("K_elbow")) {
+    report_lines <- c(report_lines, paste0("- **PCs selected by Elbow method:** ", K_elbow))
+  }
+}
+report_lines <- c(report_lines, "")
+
+if(opt$method == "peer") {
+  report_lines <- c(report_lines, "### PEER Factor Variance Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![PEER Variance](plot/peer_variance_factor_", opt$output, ".png)"))
+  report_lines <- c(report_lines, "")
+} else if(opt$method == "pca") {
+  report_lines <- c(report_lines, "### PCA Scree Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![PCA Scree](plot/PCA_variance_factor_", opt$output, ".png)"))
+  report_lines <- c(report_lines, "")
+}
+
+report_lines <- c(report_lines, "## Evaluation Plots")
+report_lines <- c(report_lines, "")
+
+if(grepl("pvca|PVCA",opt$evaluate_method)) {
+  report_lines <- c(report_lines, "### PVCA Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![PVCA Plot](assets/", opt$output, plotpdfname, "_pvca.png)"))
+  report_lines <- c(report_lines, "")
+}
+
+if(grepl("pca|PCA",opt$evaluate_method) && exists("pca_list")) {
+  report_lines <- c(report_lines, "### PCA Plot")
+  report_lines <- c(report_lines, "")
+  # List each PCA stage separately
+  for(i in names(pca_list)) {
+    if(!is.null(pca_list[[i]])) {
+      stage_label <- switch(i,
+        "adjust_before" = "Before Adjustment",
+        "adjust_observed" = "After Observed Covariate Adjustment",
+        "adjust_hidden" = "After Hidden Covariate Adjustment",
+        i
+      )
+      pca_stage_png <- file.path(opt$outputdir, "assets", paste0(opt$output, plotpdfname, "_pca_", i, ".png"))
+      if(file.exists(pca_stage_png)) {
+        report_lines <- c(report_lines, paste0("**", stage_label, ":**"))
+        report_lines <- c(report_lines, paste0("![PCA ", stage_label, "](assets/", opt$output, plotpdfname, "_pca_", i, ".png)"))
+        report_lines <- c(report_lines, "")
+      }
+    }
+  }
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_pca.pdf` (PDF contains all stages)"))
+  report_lines <- c(report_lines, "")
+}
+
+report_lines <- c(report_lines, "### Sample Distribution")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "**Sample Boxplot:**")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("**Before adjustment:**"))
+report_lines <- c(report_lines, paste0("![Boxplot Before](assets/", opt$output, "_step2_box_before.png)"))
+report_lines <- c(report_lines, "")
+if(opt$adjcov %in% c("obs","obs+hid")) {
+  report_lines <- c(report_lines, paste0("**Observed adjustment:**"))
+  report_lines <- c(report_lines, paste0("![Boxplot Observed](assets/", opt$output, "_step2_box_observed.png)"))
+  report_lines <- c(report_lines, "")
+}
+if(grepl("hid",opt$adjcov)) {
+  report_lines <- c(report_lines, paste0("**Final adjustment:**"))
+  report_lines <- c(report_lines, paste0("![Boxplot Final](assets/", opt$output, "_step2_box_final.png)"))
+  report_lines <- c(report_lines, "")
+}
+
+# Check which density plots were successfully generated
+density_plot_success <- list()
+density_plot_success$before <- !is.null(density_plot_files$before)
+if(opt$adjcov %in% c("obs","obs+hid")) density_plot_success$observed <- !is.null(density_plot_files$observed)
+if(grepl("hid",opt$adjcov)) density_plot_success$final <- !is.null(density_plot_files$final)
+
+# Report successful density plots
+density_files <- c()
+if(density_plot_success$before) {
+  density_files <- c(density_files, paste0(opt$output, "_step2_density_before.png (Before adjustment)"))
+}
+if(opt$adjcov %in% c("obs","obs+hid") && density_plot_success$observed) {
+  density_files <- c(density_files, paste0(opt$output, "_step2_density_observed.png (Observed adjustment)"))
+}
+if(grepl("hid",opt$adjcov) && density_plot_success$final) {
+  density_files <- c(density_files, paste0(opt$output, "_step2_density_final.png (Final adjustment)"))
+}
+
+if(length(density_files) > 0) {
+  report_lines <- c(report_lines, "**Density evaluation plots:**")
+  for(f in density_files) {
+    report_lines <- c(report_lines, paste0("- ", f))
+  }
+}
+
+# Report failed density plots
+failed_density <- c()
+if(!density_plot_success$before) failed_density <- c(failed_density, "before adjustment")
+if(opt$adjcov %in% c("obs","obs+hid") && !is.null(density_plot_success$observed) && !density_plot_success$observed) failed_density <- c(failed_density, "observed adjustment")
+if(grepl("hid",opt$adjcov) && !is.null(density_plot_success$final) && !density_plot_success$final) failed_density <- c(failed_density, "final adjustment")
+
+if(length(failed_density) > 0) {
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "**Gene Density Plot:**")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("*Note: Density evaluation plot(s) for ", paste(failed_density, collapse = ", "), " could not be generated. This may occur when the data has too few features or insufficient variation for density estimation.*"))
+}
+report_lines <- c(report_lines, "")
+
+if(grepl("bic|BIC",opt$evaluate_method)) {
+  report_lines <- c(report_lines, "### BIC Plot")
+  report_lines <- c(report_lines, "")
+  for(i in names(BIClist)) {
+    report_lines <- c(report_lines, paste0("**", i, ":**"))
+    report_lines <- c(report_lines, paste0("![BIC ", i, "](assets/", opt$output, plotpdfname, "_bic_", i, ".png)"))
+    report_lines <- c(report_lines, "")
+  }
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output, plotpdfname, "_bic.pdf` (PDF contains all stages)"))
+  report_lines <- c(report_lines, paste0("- **Data file:** `", opt$output, plotpdfname, "_BIC.RData`"))
+  report_lines <- c(report_lines, "")
+}
+
+report_lines <- c(report_lines, "## Covariate Correlation Analysis")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("![Covariate Correlation](assets/", opt$output, "_step2_", opt$method, "_cov_cor.png)"))
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Parameters Used")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Adjustment mode:** ", opt$adjcov))
+report_lines <- c(report_lines, paste0("- **Hidden factor method:** ", opt$method))
+report_lines <- c(report_lines, paste0("- **Evaluate method:** ", opt$evaluate_method))
+report_lines <- c(report_lines, paste0("- **BIC cores:** ", opt$BIC_cores))
+if(!is.null(opt$keepvar)) {
+  report_lines <- c(report_lines, paste0("- **Keep variables:** ", paste(opt$keepvar, collapse = ", ")))
+}
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "---")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("*Report generated at:* ", Sys.time()))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "*Generated by step2_covariate_adj v2.1*")
+
+# Write report file
+writeLines(report_lines, report_file)
+message("Markdown report saved to: ", report_file)
+
 ### finish report ####
 cat("--- all finished ---\n")
 cat("----step2_covariate_adj finished ------\n\n")

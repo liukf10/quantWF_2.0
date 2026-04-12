@@ -1,8 +1,10 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: July 30, 2025
+#Date: March 25, 2026
 #Software: R
+
+#V2.1更新: 添加outputdir参数，支持指定输出目录
 
 existpck <- rownames(installed.packages());
 if(!"corrplot" %in% existpck)
@@ -17,6 +19,432 @@ if(!"ggrepel" %in% existpck)
 suppressPackageStartupMessages(library(ggplot2))
 suppressPackageStartupMessages(library(ggpubr))
 suppressPackageStartupMessages(library(ggrepel))
+
+## Helper function: get plot directory based on outputdir parameter
+# V2.1: added outputdir parameter support
+get_plot_dir <- function(outputdir) {
+  if(is.na(outputdir) || outputdir == "") {
+    plot_dir <- "plot"
+  } else {
+    plot_dir <- file.path(outputdir, "plot")
+  }
+  # create plot directory if not exists
+  if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+  return(plot_dir)
+}
+
+## Report Generation Functions ###########
+# V2.1: Functions for generating Markdown execution reports
+
+# Initialize report file
+# V2.1 revised: Support step-specific naming (e.g., output_step1.md)
+init_report <- function(outputdir, output, step_name, append = FALSE, step_suffix = NULL) {
+  # Use step-specific suffix if provided, otherwise use default "_report.md"
+  if (!is.null(step_suffix) && step_suffix != "") {
+    report_file <- file.path(outputdir, paste0(output, "_", step_suffix, ".md"))
+  } else {
+    report_file <- file.path(outputdir, paste0(output, "_report.md"))
+  }
+  
+  if (!append) {
+    # Create new report
+    header <- paste0("# quantWF Analysis Report\n\n")
+    header <- paste0(header, "## ", step_name, "\n\n")
+    header <- paste0(header, "Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n")
+    cat(header, file = report_file)
+  } else {
+    # Append to existing report
+    cat("\n---\n\n", file = report_file, append = TRUE)
+    cat("## ", step_name, "\n\n", file = report_file, append = TRUE)
+    cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
+  }
+  
+  return(report_file)
+}
+
+# Write executed code section
+write_executed_code <- function(report_file, code, type = "r") {
+  cat("### Executed Code\n\n", file = report_file, append = TRUE)
+  cat("```", type, "\n", file = report_file, append = TRUE)
+  cat(code, "\n", file = report_file, append = TRUE)
+  cat("```\n\n", file = report_file, append = TRUE)
+}
+
+# Write parameters table
+write_parameters <- function(report_file, opt) {
+  cat("### Parameters\n\n", file = report_file, append = TRUE)
+  cat("| Parameter | Value |\n", file = report_file, append = TRUE)
+  cat("|-----------|-------|\n", file = report_file, append = TRUE)
+  
+  for (name in names(opt)) {
+    value <- opt[[name]]
+    if (is.na(value)) value <- "NA"
+    cat("| ", name, " | ", value, " |\n", file = report_file, append = TRUE)
+  }
+  cat("\n", file = report_file, append = TRUE)
+}
+
+# Capture and write output from expression
+capture_output_to_report <- function(report_file, expr, section_title = NULL) {
+  if (!is.null(section_title)) {
+    cat("### ", section_title, "\n\n", file = report_file, append = TRUE)
+  }
+  
+  # Capture all output
+  output <- capture.output(expr)
+  
+  if (length(output) > 0) {
+    cat("**Output:**\n\n", file = report_file, append = TRUE)
+    cat("```\n", file = report_file, append = TRUE)
+    cat(paste(output, collapse = "\n"), "\n", file = report_file, append = TRUE)
+    cat("```\n\n", file = report_file, append = TRUE)
+  }
+  
+  invisible(output)
+}
+
+# Save plot as both PDF and PNG
+# V2.1: Helper function to save plots in both formats
+save_plot <- function(plot_func, plot_dir, filename, width = 10, height = 8, dpi = 300) {
+  # Save as PDF
+  pdf_path <- file.path(plot_dir, paste0(filename, ".pdf"))
+  pdf(pdf_path, width = width, height = height)
+  plot_func()
+  dev.off()
+  
+  # Save as PNG
+  png_path <- file.path(plot_dir, paste0(filename, ".png"))
+  png(png_path, width = width * dpi, height = height * dpi, res = dpi)
+  plot_func()
+  dev.off()
+  
+  invisible(list(pdf = pdf_path, png = png_path))
+}
+
+# Write image reference to markdown report
+write_md_image <- function(report_file, title, png_path, alt_text = NULL) {
+  if (is.null(alt_text)) alt_text <- title
+  cat("### ", title, "\n\n", file = report_file, append = TRUE)
+  cat("!", alt_text, "](", basename(png_path), ")\n\n", sep = "", file = report_file, append = TRUE)
+}
+
+# Write loginfo in YAML format
+write_loginfo <- function(report_file, loginfo) {
+  cat("**loginfo:**\n\n", file = report_file, append = TRUE)
+  cat("```yaml\n", file = report_file, append = TRUE)
+  
+  if (!is.null(loginfo$record)) {
+    cat("record: |\n", file = report_file, append = TRUE)
+    # Handle multi-line records
+    record_lines <- strsplit(as.character(loginfo$record), "\n")[[1]]
+    for (line in record_lines) {
+      cat("  ", line, "\n", file = report_file, append = TRUE)
+    }
+  }
+  if (!is.null(loginfo$input)) {
+    cat("input: ", loginfo$input, "\n", file = report_file, append = TRUE)
+  }
+  if (!is.null(loginfo$output)) {
+    cat("output: ", loginfo$output, "\n", file = report_file, append = TRUE)
+  }
+  if (!is.null(loginfo$packageVersion)) {
+    cat("packageVersion: ", as.character(loginfo$packageVersion), "\n", file = report_file, append = TRUE)
+  }
+  if (!is.null(loginfo$running_time)) {
+    cat("running_time: ", format(loginfo$running_time), "\n", file = report_file, append = TRUE)
+  }
+  
+  cat("```\n\n", file = report_file, append = TRUE)
+}
+
+# Convert PDF to PNG and return path
+pdf_to_png <- function(pdf_path, dpi = 150) {
+  if (!file.exists(pdf_path)) {
+    warning("PDF file not found: ", pdf_path)
+    return(NULL)
+  }
+  
+  png_path <- sub("\\.pdf$", ".png", pdf_path)
+  
+  # Try pdftools first
+  if (requireNamespace("pdftools", quietly = TRUE)) {
+    tryCatch({
+      pdftools::pdf_convert(pdf_path, filenames = png_path, dpi = dpi, format = "png", verbose = FALSE)
+      return(png_path)
+    }, error = function(e) {
+      warning("pdftools conversion failed: ", e$message)
+    })
+  }
+  
+  # Try magick as fallback
+  if (requireNamespace("magick", quietly = TRUE)) {
+    tryCatch({
+      img <- magick::image_read(pdf_path, density = dpi)
+      magick::image_write(img, png_path, format = "png")
+      return(png_path)
+    }, error = function(e) {
+      warning("magick conversion failed: ", e$message)
+    })
+  }
+  
+  warning("PDF to PNG conversion failed. Install 'pdftools' or 'magick' package.")
+  return(NULL)
+}
+
+# Insert plot into report
+insert_plot <- function(report_file, pdf_path, caption = NULL) {
+  # Convert PDF to PNG
+  png_path <- pdf_to_png(pdf_path)
+  
+  if (!is.null(png_path) && file.exists(png_path)) {
+    cat("**Plot:**\n\n", file = report_file, append = TRUE)
+    # Use relative path from report location
+    rel_path <- basename(png_path)
+    cat("![", ifelse(is.null(caption), "Plot", caption), "](", rel_path, ")\n\n", 
+        file = report_file, append = TRUE)
+    return(TRUE)
+  } else {
+    cat("*Plot conversion failed for: ", basename(pdf_path), "*\n\n", 
+        file = report_file, append = TRUE)
+    return(FALSE)
+  }
+}
+
+# Write generated files summary
+write_generated_files <- function(report_file, files, final_file = NULL) {
+  cat("### Generated Files Summary\n\n", file = report_file, append = TRUE)
+  cat("| File | Path | Description |\n", file = report_file, append = TRUE)
+  cat("|------|------|-------------|\n", file = report_file, append = TRUE)
+  
+  for (i in seq_along(files)) {
+    file_path <- files[[i]]
+    file_name <- basename(file_path)
+    
+    # Determine if this is the final file
+    is_final <- !is.null(final_file) && normalizePath(file_path, mustWork = FALSE) == normalizePath(final_file, mustWork = FALSE)
+    
+    if (is_final) {
+      cat("| **", file_name, "** | **", file_path, "** | **Final Result for Next Step** |\n", 
+          file = report_file, append = TRUE)
+    } else {
+      cat("| ", file_name, " | ", file_path, " | Intermediate Result |\n", 
+          file = report_file, append = TRUE)
+    }
+  }
+  cat("\n", file = report_file, append = TRUE)
+}
+
+# Check for existing report and determine output prefix
+# V2.1 revised: Support step-specific naming and report inheritance from input file
+check_existing_report <- function(outputdir, quantfile, output, step_suffix = NULL, 
+                                   loaded_report_file = NULL, inherit_report = FALSE) {
+  
+  # Determine target report file name based on step_suffix
+  if (!is.null(step_suffix) && step_suffix != "") {
+    target_report <- file.path(outputdir, paste0(output, "_", step_suffix, ".md"))
+  } else {
+    target_report <- file.path(outputdir, paste0(output, "_report.md"))
+  }
+  
+  # Case 1: If target report already exists, append to it (same output, multiple runs)
+  if (file.exists(target_report)) {
+    return(list(report_file = target_report, prefix = output, append = TRUE, 
+                inherited = FALSE, source_report = NULL))
+  }
+  
+  # Case 2: If loaded_report_file is provided and exists, need to copy it
+  if (inherit_report && !is.null(loaded_report_file) && file.exists(loaded_report_file)) {
+    # Check if it's the same file (same output name)
+    if (normalizePath(loaded_report_file, mustWork = FALSE) == normalizePath(target_report, mustWork = FALSE)) {
+      return(list(report_file = target_report, prefix = output, append = TRUE, 
+                  inherited = FALSE, source_report = NULL))
+    }
+    # Different output name, need to copy
+    return(list(report_file = target_report, prefix = output, append = FALSE, 
+                inherited = TRUE, source_report = loaded_report_file))
+  }
+  
+  # Case 3: Try to find report based on quantfile name (for backward compatibility)
+  if (!is.na(quantfile) && file.exists(quantfile)) {
+    base_name <- tools::file_path_sans_ext(basename(quantfile))
+    # Remove common suffixes to find original prefix
+    base_name <- sub("_log_.*$", "", base_name)
+    base_name <- sub("_filter_.*$", "", base_name)
+    base_name <- sub("_rmOut$", "", base_name)
+    base_name <- sub("_adj_.*$", "", base_name)
+    base_name <- sub("_raw$", "", base_name)
+    
+    # Check for step-specific report first
+    if (!is.null(step_suffix) && step_suffix != "") {
+      potential_report <- file.path(outputdir, paste0(base_name, "_", step_suffix, ".md"))
+      if (file.exists(potential_report)) {
+        if (base_name == output) {
+          return(list(report_file = potential_report, prefix = base_name, append = TRUE, 
+                      inherited = FALSE, source_report = NULL))
+        } else {
+          # Different output, need to copy
+          return(list(report_file = target_report, prefix = output, append = FALSE, 
+                      inherited = TRUE, source_report = potential_report))
+        }
+      }
+    }
+    
+    # Check for default report
+    potential_report <- file.path(outputdir, paste0(base_name, "_report.md"))
+    if (file.exists(potential_report)) {
+      if (base_name == output) {
+        return(list(report_file = potential_report, prefix = base_name, append = TRUE, 
+                    inherited = FALSE, source_report = NULL))
+      } else {
+        # Different output, need to copy
+        return(list(report_file = target_report, prefix = output, append = FALSE, 
+                    inherited = TRUE, source_report = potential_report))
+      }
+    }
+  }
+  
+  # Case 4: New report
+  return(list(report_file = target_report, prefix = output, append = FALSE, 
+              inherited = FALSE, source_report = NULL))
+}
+
+# Copy report file if needed (for report inheritance between steps)
+copy_report_if_needed <- function(report_info) {
+  if (report_info$inherited && !is.null(report_info$source_report) && file.exists(report_info$source_report)) {
+    # Create target directory if needed
+    target_dir <- dirname(report_info$report_file)
+    if (!dir.exists(target_dir)) {
+      dir.create(target_dir, recursive = TRUE)
+    }
+    # Copy file
+    file.copy(report_info$source_report, report_info$report_file, overwrite = TRUE)
+    return(TRUE)
+  }
+  return(FALSE)
+}
+
+# Write step report
+write_step_report <- function(report_file, step_name, description, details, output_file) {
+  cat("### ", step_name, "\n\n", file = report_file, append = TRUE)
+  cat(description, "\n\n", file = report_file, append = TRUE)
+  
+  # Write details as table
+  if (!is.null(details) && length(details) > 0) {
+    cat("**Details:**\n\n", file = report_file, append = TRUE)
+    cat("| Metric | Value |\n", file = report_file, append = TRUE)
+    cat("|--------|-------|\n", file = report_file, append = TRUE)
+    for (name in names(details)) {
+      value <- details[[name]]
+      if (is.na(value)) value <- "NA"
+      cat("| ", name, " | ", value, " |\n", file = report_file, append = TRUE)
+    }
+    cat("\n", file = report_file, append = TRUE)
+  }
+  
+  cat("**Output file:** `", output_file, "`\n\n", file = report_file, append = TRUE)
+}
+
+# Write final summary with generated files
+write_final_summary <- function(report_file, outputdir, output, step_name, current_step = NULL, script_start_time = NULL) {
+  cat("## Summary\n\n", file = report_file, append = TRUE)
+  cat("Analysis completed successfully.\n\n", file = report_file, append = TRUE)
+  
+  # If no start time provided, use current time minus 1 hour as fallback
+  if (is.null(script_start_time)) {
+    script_start_time <- Sys.time() - 3600
+  }
+  
+  # Helper function to check if file was generated in current run
+  is_file_from_current_run <- function(fpath) {
+    if (!file.exists(fpath)) return(FALSE)
+    # Check if file was modified after script started
+    fmtime <- file.mtime(fpath)
+    return(fmtime >= script_start_time)
+  }
+  
+  cat("**Generated Files:**\n\n", file = report_file, append = TRUE)
+  cat("| File | Size | Modified Time |\n", file = report_file, append = TRUE)
+  cat("|------|------|---------------|\n", file = report_file, append = TRUE)
+  
+  # Find all files with the output prefix
+  all_files <- list.files(outputdir, pattern = paste0("^", output, "_"), full.names = FALSE)
+  all_files <- c(all_files, list.files(outputdir, pattern = paste0("^", output, "\\."), full.names = FALSE))
+  all_files <- unique(all_files)
+  
+  file_count <- 0
+  for (fname in sort(all_files)) {
+    fpath <- file.path(outputdir, fname)
+    if (is_file_from_current_run(fpath)) {
+      # Get file size
+      fsize <- file.size(fpath)
+      size_str <- if (fsize < 1024) paste0(fsize, " B")
+                  else if (fsize < 1024^2) paste0(round(fsize/1024, 2), " KB")
+                  else paste0(round(fsize/1024^2, 2), " MB")
+      # Get modification time
+      mtime <- file.mtime(fpath)
+      time_str <- format(mtime, "%Y-%m-%d %H:%M:%S")
+      cat("| `", fname, "` | ", size_str, " | ", time_str, " |\n", file = report_file, append = TRUE)
+      file_count <- file_count + 1
+    }
+  }
+  if (file_count == 0) {
+    cat("| *No files generated in current run* | - | - |\n", file = report_file, append = TRUE)
+  }
+  cat("\n", file = report_file, append = TRUE)
+  
+  # Add plots section if plot directory exists
+  plot_dir <- file.path(outputdir, "plot")
+  if (dir.exists(plot_dir)) {
+    plot_files <- list.files(plot_dir, pattern = paste0("^", output, "_"), full.names = FALSE)
+    plot_files <- plot_files[sapply(plot_files, function(pf) is_file_from_current_run(file.path(plot_dir, pf)))]
+    if (length(plot_files) > 0) {
+      cat("**Generated Plots:**\n\n", file = report_file, append = TRUE)
+      cat("| File | Size | Modified Time |\n", file = report_file, append = TRUE)
+      cat("|------|------|---------------|\n", file = report_file, append = TRUE)
+      for (pfname in sort(plot_files)) {
+        pfpath <- file.path(plot_dir, pfname)
+        # Get file size
+        pfsize <- file.size(pfpath)
+        psize_str <- if (pfsize < 1024) paste0(pfsize, " B")
+                     else if (pfsize < 1024^2) paste0(round(pfsize/1024, 2), " KB")
+                     else paste0(round(pfsize/1024^2, 2), " MB")
+        # Get modification time
+        pmtime <- file.mtime(pfpath)
+        ptime_str <- format(pmtime, "%Y-%m-%d %H:%M:%S")
+        cat("| `plot/", pfname, "` | ", psize_str, " | ", ptime_str, " |\n", file = report_file, append = TRUE)
+      }
+      cat("\n", file = report_file, append = TRUE)
+    }
+  }
+  
+  # Add assets section if assets directory exists (for PNG files)
+  assets_dir <- file.path(outputdir, "assets")
+  if (dir.exists(assets_dir)) {
+    assets_files <- list.files(assets_dir, pattern = paste0("^", output, "_"), full.names = FALSE)
+    assets_files <- assets_files[sapply(assets_files, function(af) is_file_from_current_run(file.path(assets_dir, af)))]
+    if (length(assets_files) > 0) {
+      cat("**Generated Assets (PNG):**\n\n", file = report_file, append = TRUE)
+      cat("| File | Size | Modified Time |\n", file = report_file, append = TRUE)
+      cat("|------|------|---------------|\n", file = report_file, append = TRUE)
+      for (afname in sort(assets_files)) {
+        afpath <- file.path(assets_dir, afname)
+        # Get file size
+        afsize <- file.size(afpath)
+        asize_str <- if (afsize < 1024) paste0(afsize, " B")
+                     else if (afsize < 1024^2) paste0(round(afsize/1024, 2), " KB")
+                     else paste0(round(afsize/1024^2, 2), " MB")
+        # Get modification time
+        amtime <- file.mtime(afpath)
+        atime_str <- format(amtime, "%Y-%m-%d %H:%M:%S")
+        cat("| `assets/", afname, "` | ", asize_str, " | ", atime_str, " |\n", file = report_file, append = TRUE)
+      }
+      cat("\n", file = report_file, append = TRUE)
+    }
+  }
+  
+  cat("---\n\n", file = report_file, append = TRUE)
+  cat("*Report generated by quantWF ", step_name, "*\n", file = report_file, append = TRUE)
+}
 
 ##pvca###########
 pvca_confounder_effect <- function(data,meta,myExpressionSet = NULL,batch.factors = NA,
@@ -57,6 +485,14 @@ pvca_evaluate <- function(pvcadata,exp_design,pct_threshold = 0.6, output = NA) 
   if(!requireNamespace("lme4", quietly = TRUE)) 
     stop("no lme4 package, please install the R pakcage before run me.")
   suppressPackageStartupMessages(library(lme4))
+  
+  # V2.1: Add input validation
+  if(is.null(pvcadata)) stop("pvcadata is NULL. Please check input data.")
+  if(!is.matrix(pvcadata) && !is.data.frame(pvcadata)) 
+    stop("pvcadata must be a matrix or data.frame.")
+  if(nrow(pvcadata) == 0 || ncol(pvcadata) == 0) 
+    stop("pvcadata has zero rows or columns.")
+  
   ## Load data 
   dataRowN <- nrow(pvcadata)
   dataColN <- ncol(pvcadata)
@@ -266,7 +702,7 @@ pcasave <- function(pca, filename, width=8, height=6){
 #v2.0
 pca_plot_var <- function(pcadata, meta, title = "",
                          point_size=4,point_shape=19, na.value = "grey50",
-                         gradient_color = rainbow(5),...) {
+                         gradient_color = rainbow(5), filename = NULL, ...) {
   if(class(pcadata)!="prcomp") stop("pcadata must be a prcomp object.")
   if(all(rownames(pcadata$x) != rownames(meta)))
     stop("pcadata and meta must have the same sample and sequence.")
@@ -284,7 +720,16 @@ pca_plot_var <- function(pcadata, meta, title = "",
                       point_size=point_size,point_shape=point_shape,...) +
           theme(legend.title = element_text()) +labs(color = colnames(meta)[i])
       }
-      print(p1)}
+      # If filename is provided, save each plot as separate file
+      if(!is.null(filename)) {
+        png_file <- paste0(filename, "_", colnames(meta)[i], ".png")
+        png(png_file, width = 10*300, height = 8*300, res = 300)
+        print(p1)
+        dev.off()
+      } else {
+        print(p1)
+      }
+    }
   }
 }
 
@@ -526,7 +971,7 @@ BIC_evaluate <- function(quant,covar,num_cores = 30, output = NULL) {
   registerDoParallel(cl)
   #pcs <- paste(paste0("d$PC", 1:35), collapse = " + ")
   results <- foreach(i = 1:nGene, .packages = c("stats"), .combine = c) %dopar% {
-    fmla <- as.formula(paste(colnames(d)[i],"~ ", paste(colnames(covar), collapse= "+")))
+    fmla <- as.formula(paste0("`", colnames(d)[i], "`", "~ ", paste0("`", colnames(covar), "`", collapse= "+")))
     resBIC <- try(step(lm(fmla, data = d), k = log(nSample), direction = "both"),silent = TRUE)
     if(!inherits(resBIC,"try-error"))
       return(list(names(attr(resBIC$terms, "dataClasses"))[-1])) else return(NA)
@@ -541,12 +986,29 @@ BIC_evaluate <- function(quant,covar,num_cores = 30, output = NULL) {
   stopCluster(cl)
   # Combine results
   covBIC <- unlist(results)
+  # Check if covBIC is empty
+  if(length(covBIC) == 0 || all(is.na(covBIC))) {
+    stop("BIC results are empty. Cannot generate BIC plot.")
+  }
   # Prepare for plotting
   #save.image(file="bicresult.RData")
-  bicplotdata <- data.frame((table(covBIC)[colnames(covar)] / nGene))
-  #level is arrange by origin sequence
-  bicplotdata$covBIC <- factor(colnames(covar), levels = colnames(covar))
-  bicplotdata$Freq[is.na(bicplotdata$Freq)] <- 0
+  bic_table <- table(covBIC)[colnames(covar)]
+  # Check if bic_table is valid
+  if(length(bic_table) == 0 || all(is.na(bic_table))) {
+    message("BIC table is empty. Creating empty plot.")
+    bicplotdata <- data.frame(Freq = rep(0, length(colnames(covar))), 
+                              covBIC = factor(colnames(covar), levels = colnames(covar)))
+  } else {
+    #V2.1 260329 fixed error when only have 1 var
+    if(ncol(covar) == 1) {
+      bicplotdata <- data.frame(covBIC = colnames(covar), Freq = bic_table/nGene)
+    } else {
+      bicplotdata <- data.frame((bic_table / nGene))
+      #level is arrange by origin sequence
+      bicplotdata$covBIC <- factor(colnames(covar), levels = colnames(covar))
+      bicplotdata$Freq[is.na(bicplotdata$Freq)] <- 0
+    }
+  }
   #bicplotdata$covBIC <- factor(bicplotdata$covBIC, levels = bicplotdata$covBIC)
   pic <- ggplot(bicplotdata,aes(x = covBIC, y = Freq)) +
     geom_col() + 
@@ -641,13 +1103,13 @@ density_plot <- function(quant, covar=NULL, group=NA, title = "",
 
 #data evaluate pick 4 gene to draw the plot.
 densityplot <- function(quant,output, savefile = TRUE,
-                        width = 12, height = 10,verbose = 0){
+                        width = 12, height = 10,verbose = 0, outputdir = "."){
   if(!"opt" %in% ls()) {
     opt <- list();
     opt$grpname = NA;
     if("group" %in% ls()) {rm(group);message("group obj is force to removed")}
   }
-  if(!dir.exists("plot")) dir.create("plot")
+  plot_dir <- get_plot_dir(outputdir)
   #251126 fix some error
   noNAnum <- rowSums(!is.na(quant))
   #remove all NA row
@@ -754,7 +1216,7 @@ densityplot <- function(quant,output, savefile = TRUE,
   toptitle = paste0("density_plot_",output)
   pall = ggarrange(p1, p2, p3, p4, nrow = 2, ncol = 2, labels = c('A', 'B', 'C', 'D'), 
                    font.label = list(color = 'black'))
-  if(savefile) pdf(file = paste0("plot/density_plot_",output,".pdf"),width = width, height = height)
+  if(savefile) pdf(file = file.path(plot_dir, paste0("density_plot_",output,".pdf")),width = width, height = height)
   print(pall)    
   if(savefile) dev.off()
 }
@@ -764,7 +1226,7 @@ densityplot <- function(quant,output, savefile = TRUE,
 Outlier_Detect <- function(data, iteration = NA, intensity = "intensity",maxNA=0.5,
                            distmethod = "manhattan", A.IAC = FALSE, sdout = 2,
                            plot = TRUE, filename = NULL,
-                           text.labels = NA, abline.col = "red", abline.lwd = 1){
+                           text.labels = NA, abline.col = "red", abline.lwd = 1, outputdir = "."){
   distmethod <- match.arg(distmethod,
                           c("manhattan","euclidean", "canberra","correlation","bicor"));
   if(!is.list(data)) stop("data should be a list and contain inf and intensity.")
@@ -864,12 +1326,29 @@ Outlier_Detect <- function(data, iteration = NA, intensity = "intensity",maxNA=0
   if (!is.na(miss.value)) quant[is.na(quant)] <- miss.value; 
   if(plot) {
     if (is.character(filename) & length(filename) == 1){
-      if(!dir.exists("plot")) dir.create("plot"); #210615fix exist plot dir
-      pdf(paste0("plot/",filename, " outliersample.pdf"))
+      plot_dir <- get_plot_dir(outputdir)
+      # Create assets directory for PNG files
+      assets_dir <- file.path(outputdir, "assets")
+      if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+      
+      # Save as PDF -> plot/
+      pdf(file.path(plot_dir, paste0(filename, "_outliersample.pdf")))
+      for( i in names(pic))
+        print(pic[[i]])
+      dev.off()
+      
+      # Save as PNG -> assets/ - each iteration as separate file
+      for( i in names(pic)) {
+        png_path <- file.path(assets_dir, paste0(filename, "_outliersample_", i, ".png"))
+        png(png_path, width = 10*300, height = 8*300, res = 300)
+        print(pic[[i]])
+        dev.off()
+      }
+    } else {
+      # Just print to current device if no filename
+      for( i in names(pic))
+        print(pic[[i]])
     }
-    for( i in names(pic))
-      print(pic[[i]])
-    if (is.character(filename) & length(filename) == 1) dev.off()
   }
   data <- list(inf = inf, intensity = quant, outlier =outlier)
 }

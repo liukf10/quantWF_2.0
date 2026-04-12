@@ -4,10 +4,17 @@
 
 **quantWF_2.0** is an R-based bioinformatics workflow framework designed for comprehensive quantitative omics data analysis, including RNA-seq, mass spectrometry (MS)-based proteomics, and other quantitative data types. 
 
-- **Version**: 2.0
+- **Version**: 2.1
 - **Maintainer**: Kefu Liu (liukefu19@163.com)
 - **Language**: R (with Chinese comments and documentation)
 - **License**: Not specified
+
+### V2.1 Updates
+
+- **新增 `outputdir` 参数**: 支持指定输出目录，未设置时默认使用当前工作目录
+  - R版本: 设置 `outputdir = "path/to/output"`
+  - 命令行版本: 使用 `--outputdir=path/to/output`
+  - 所有输出文件（包括 plot 目录）将保存到指定目录
 
 ### Key Capabilities
 
@@ -336,6 +343,7 @@ Each step appends to `loginfo` object containing:
 
 ## Version History
 
+- **v2.1** (March 2026) - Added `outputdir` parameter for custom output directory
 - **v2.0** (July 2025) - Current version with unified interface
 - Added PCA-based hidden covariate method
 - Added BIC evaluation

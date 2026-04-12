@@ -1,8 +1,10 @@
-#Version: 2.0
+#Version: 2.1
 #created: Kefu liu(liukefu19@163.com)
 #Maintainer: Kefu Liu
-#Date: Sep 21, 2025
+#Date: March 25, 2026
 #Software: R
+#V2.1: 添加outputdir参数支持指定输出目录
+#260325 changed to Markdown report format, added PNG output for plots
 
 
 #covar can be NULL
@@ -27,6 +29,8 @@ option_list = list(
               type='character',help="IDinf file path"),
   make_option("--output", action="store", default=NA,
               type='character',help="output prefix name"),
+  make_option("--outputdir", action="store", default=NA,
+              type='character',help="output directory path, default is current directory"),
   make_option("--funcdir", action="store", default=NA,
               type='character',help="preprocess function file path"),
   make_option("--method", action="store", default=NA,
@@ -50,7 +54,17 @@ rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","loginfo","existpck
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 
 ### 0.1 parameters evaluate ######
-if(!dir.exists("plot")) dir.create("plot")
+if(is.na(opt$outputdir)) {
+  opt$outputdir = ".";
+  message("no outputdir, setting to current directory")
+}
+if(!dir.exists(opt$outputdir)) dir.create(opt$outputdir, recursive = TRUE)
+#V2.1: 使用outputdir参数创建plot目录和assets目录
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
+
 if(is.na(opt$output)) {
   opt$output = "data";
   message("no output, setting to 'data' as prefix")
@@ -87,6 +101,18 @@ if(is.na(opt$BIC_cores)) {
 if(is.na(opt$tools)) {
   opt$tools = "tensorQTL"; message("tools for QTL analysis: tensorQTL or QTLtools.  QTLtools have Genebody and TSS, you can use GB/TSS/all to refer, Setting tools as default: tensorQTL.")}
 opt$tools <- match.arg(opt$tools,c("tensorQTL","QTLtools","TSS.QTLtools","GB.QTLtools","all.QTLtools","both"));
+
+### 0.0 Initialize Markdown Report ########
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_cov4QTL_report.md"))
+report_lines <- c()
+report_lines <- c(report_lines, "# Step 2: QTL Covariate Preparation Report")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("**Date:** ", Sys.time()))
+report_lines <- c(report_lines, paste0("**Output:** ", opt$output))
+report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+report_lines <- c(report_lines, paste0("**Method:** ", opt$method))
+report_lines <- c(report_lines, paste0("**Tools:** ", opt$tools))
+report_lines <- c(report_lines, "")
 
 # opt$nfactor will check in peer section
 ### 0.2 read quant & covar&genotype_pc&IDinf info ####
@@ -231,9 +257,45 @@ if(!"ID" %in% colnames(IDinf))
     if(any(is.na(pos))) stop("Not all ID in IDinf match with quant.")
     IDinf <- IDinf[pos,]
   }
-if(!"./plot" %in% list.dirs()) {dir.create("plot")}
+
+report_lines <- c(report_lines, "## Output Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "### Covariate Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- `", opt$output,"_",opt$method,"_covariate4QTL.txt`"))
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "### Expression Matrix Files")
+report_lines <- c(report_lines, "")
+
+if(grepl("tensorQTL|both",opt$tools)) {
+  report_lines <- c(report_lines, paste0("- `", opt$output,".tss.tensor.bed` (for tensorQTL)"))
+}
+if(grepl("QTLtools|both",opt$tools)) {
+  if(grepl("tss|all|both",opt$tools)|opt$tools == "QTLtools") {
+    report_lines <- c(report_lines, paste0("- `", opt$output,".tss.bed` (for QTLtools)"))
+  }
+  if(grepl("GB|all|both",opt$tools)) {
+    report_lines <- c(report_lines, paste0("- `", opt$output,".genebody.bed` (for QTLtools)"))
+  }
+}
+report_lines <- c(report_lines, "")
+
+report_lines <- c(report_lines, "## Input Information")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Quantification file:** ", ifelse(is.na(opt$quantfile), "Using quant object", opt$quantfile)))
+report_lines <- c(report_lines, paste0("- **Covariate file:** ", ifelse(is.na(opt$covarfile), "Not provided", opt$covarfile)))
+report_lines <- c(report_lines, paste0("- **Genotype PC file:** ", ifelse(is.na(opt$genotype_pcfile), "Not provided", opt$genotype_pcfile)))
+report_lines <- c(report_lines, paste0("- **ID file:** ", ifelse(is.na(opt$IDfile), "Not provided", opt$IDfile)))
+report_lines <- c(report_lines, paste0("- **Number of features:** ", nrow(quant)))
+report_lines <- c(report_lines, paste0("- **Number of samples:** ", ncol(quant)))
+report_lines <- c(report_lines, "")
+
 ### 1. hidden covariate search #########
 cat('-----data preprocess 2 hidden covariate search----- \n')
+
+report_lines <- c(report_lines, "## Hidden Covariate Search")
+report_lines <- c(report_lines, "")
 
 if(opt$method == "peer") {
   if(is.na(opt$nFactor))  {
@@ -272,13 +334,33 @@ if(opt$method == "peer") {
     Variance = apply(factors,2,var);
     Variance<-sort(Variance, decreasing=TRUE); 
     Variance<-100*Variance/sum(Variance)
-    pdf(paste0("plot/peer_variance_factor_",opt$output,".pdf"),width=5,height=5)
+    
+    plotpdfname = paste0("_cov4QTL_",opt$method)
+    peer_pdf <- file.path(plot_dir, paste0("peer_variance_factor_",opt$output,".pdf"))
+    peer_png <- file.path(assets_dir, paste0("peer_variance_factor_",opt$output,".png"))
+    
+    pdf(peer_pdf,width=5,height=5)
+    plot(Variance,type="o",pch=19,col="red",xlab="Factors")
+    dev.off()
+    
+    png(peer_png,width=500,height=500,res=150)
     plot(Variance,type="o",pch=19,col="red",xlab="Factors")
     dev.off()
   }
   if(is.null(covar))
     covar_hid <- data.frame(factors) else
       covar_hid <- data.frame(covar,factors)
+  
+  report_lines <- c(report_lines, paste0("- **Method:** PEER (Probabilistic Estimation of Expression Residuals)"))
+  report_lines <- c(report_lines, paste0("- **Number of factors:** ", nFactor))
+  report_lines <- c(report_lines, paste0("- **Runtime:** ", round(time[3], 2), " seconds"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "### PEER Factor Variance Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![PEER Variance](assets/peer_variance_factor_", opt$output, ".png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/peer_variance_factor_", opt$output, ".pdf`"))
+  report_lines <- c(report_lines, "")
 }
 if(opt$method == "pca"){
   expr = t(as.matrix(quant)) 
@@ -297,10 +379,21 @@ if(opt$method == "pca"){
   resultRunBE<-runBE(expr,B=25,alpha=0.05,mc.cores=1)
   #print(resultRunBE$numOfPCsChosen)
   K_BE<-resultRunBE$numOfPCsChosen 
-  pdf(paste0("plot/PCA_variance_factor_",opt$output,".pdf"),width=5,height=5)
-  makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
-                titleText=opt$output)
+  
+  plotpdfname = paste0("_cov4QTL_",opt$method)
+  pca_var_pdf <- file.path(plot_dir, paste0("PCA_variance_factor_",opt$output,".pdf"))
+  pca_var_png <- file.path(assets_dir, paste0("PCA_variance_factor_",opt$output,".png"))
+  
+  pdf(pca_var_pdf,width=5,height=5)
+  print(makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
+                titleText=opt$output))
   dev.off()
+  
+  png(pca_var_png,width=500,height=500,res=150)
+  print(makeScreePlot(prcompResult,labels=c("Elbow","BE"),values=c(K_elbow,K_BE),
+                titleText=opt$output))
+  dev.off()
+  
   if(opt$nPCAchoose=="BE") PCsTop<-PCs[,1:K_BE] #default is choose K_BE
   if(opt$nPCAchoose=="Elbow") PCsTop<-PCs[,1:K_elbow]
   if(!is.null(covar)){
@@ -318,14 +411,35 @@ if(opt$method == "pca"){
     }
     knowncovFiltered<-filterKnownCovariates(covar2,PCsTop,unadjustedR2_cutoff=0.9)
     PCsTop<-scale(PCsTop)
-    covar_hid <-data.frame(covar[,colnames(covar) %in% colnames(knowncovFiltered)],PCsTop)
-  }
+    covar_hid <-data.frame(PCsTop,covar[,colnames(covar) %in% colnames(knowncovFiltered)])
+  } else covar_hid <- scale(PCsTop)
+  
+  report_lines <- c(report_lines, paste0("- **Method:** PCA-based hidden covariate extraction"))
+  report_lines <- c(report_lines, paste0("- **PC selection method:** ", opt$nPCAchoose))
+  report_lines <- c(report_lines, paste0("- **Number of PCs selected:** ", ncol(PCsTop)))
+  report_lines <- c(report_lines, paste0("  - Elbow method suggested: ", K_elbow, " PCs"))
+  report_lines <- c(report_lines, paste0("  - BE method suggested: ", K_BE, " PCs"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "### PCA Scree Plot")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![PCA Scree](assets/PCA_variance_factor_", opt$output, ".png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/PCA_variance_factor_", opt$output, ".pdf`"))
+  report_lines <- c(report_lines, "")
 } 
 
-write.table(t(covar_hid),file=paste0(opt$output,"_",opt$method,"_covariate4QTL.txt"),col.names=NA,quote=F)
-record <- paste0(opt$output,"_",opt$method,"_covariate4QTL.txt was saved.")
+write.table(t(covar_hid),file=file.path(opt$outputdir, paste0(opt$output,"_",opt$method,"_covariate4QTL.txt")),col.names=NA,quote=F)
+record <- paste0(file.path(opt$outputdir, paste0(opt$output,"_",opt$method,"_covariate4QTL.txt"))," was saved.")
 message(record)
 record <- paste0(record,"\n")
+
+report_lines <- c(report_lines, "### Output Covariate File")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **Covariate file:** `", opt$output,"_",opt$method,"_covariate4QTL.txt`"))
+report_lines <- c(report_lines, paste0("- **Number of covariates:** ", ncol(covar_hid)))
+report_lines <- c(report_lines, paste0("- **Number of samples:** ", nrow(covar_hid)))
+report_lines <- c(report_lines, "")
+
 ### 2 merge info ############
 
 IDinf$seqnames <- gsub("chr","",IDinf$seqnames)
@@ -350,14 +464,24 @@ if(grepl("tensorQTL|both",opt$tools)) {
   # Write TSS-based BED file
   write.table(
     tssbed,
-    file = paste0(opt$output,".tss.tensor.bed"),
+    file = file.path(opt$outputdir, paste0(opt$output,".tss.tensor.bed")),
     quote = FALSE, sep = "\t",row.names = FALSE, col.names = TRUE)
   
-  record <- paste0(record, opt$output,".tss.tensor.bed was saved for tensorQTL\n")
+  record <- paste0(record, file.path(opt$outputdir, paste0(opt$output,".tss.tensor.bed"))," was saved for tensorQTL\n")
   message("Done! The file 'tss.tensor.bed' for tensorQTL have been generated successfully.")
+  
+  report_lines <- c(report_lines, "## TensorQTL Format Output")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **TSS BED file:** `", opt$output,".tss.tensor.bed`"))
+  report_lines <- c(report_lines, paste0("  - Number of features: ", nrow(tssbed)))
+  report_lines <- c(report_lines, paste0("  - Number of samples: ", ncol(tssbed) - 4))
+  report_lines <- c(report_lines, "")
 }
 ###  For QTltools 
 if(grepl("QTLtools|both",opt$tools)) {
+  report_lines <- c(report_lines, "## QTLtools Format Output")
+  report_lines <- c(report_lines, "")
+  
   if(grepl("tss|all|both",opt$tools)|opt$tools == "QTLtools") {
     message("Creating TSS-based BED file...")
     tssbed <- cbind(IDinf[,c(1,2,3,4,4,5)],quant)
@@ -368,10 +492,15 @@ if(grepl("QTLtools|both",opt$tools)) {
     # Write TSS-based BED file
     write.table(
       tssbed,
-      file = paste0(opt$output,".tss.bed"),
+      file = file.path(opt$outputdir, paste0(opt$output,".tss.bed")),
       quote = FALSE,sep = "\t",row.names = FALSE,col.names = TRUE)
-    record <- paste0(record, opt$output,".tss.bed was saved for QTLtools\n")
+    record <- paste0(record, file.path(opt$outputdir, paste0(opt$output,".tss.bed"))," was saved for QTLtools\n")
     message("Done! The file 'expression.tss.bed' for QTLtools have been generated successfully.")
+    
+    report_lines <- c(report_lines, paste0("- **TSS BED file:** `", opt$output,".tss.bed`"))
+    report_lines <- c(report_lines, paste0("  - Number of features: ", nrow(tssbed)))
+    report_lines <- c(report_lines, paste0("  - Number of samples: ", ncol(tssbed) - 6))
+    report_lines <- c(report_lines, "")
   }
   if(grepl("GB|all|both",opt$tools)) {
     message("Creating Genebody-based BED file...")
@@ -380,10 +509,15 @@ if(grepl("QTLtools|both",opt$tools)) {
     #Write Genebody-based BED 
     write.table(
       genebody_bed,
-      file = paste0(opt$output,".genebody.bed"),
+      file = file.path(opt$outputdir, paste0(opt$output,".genebody.bed")),
       quote = FALSE,sep = "\t", row.names = FALSE,col.names = TRUE)
-    record <- paste0(record, opt$output,".genebody.bed was saved for QTLtools\n")
+    record <- paste0(record, file.path(opt$outputdir, paste0(opt$output,".genebody.bed"))," was saved for QTLtools\n")
     message("Done! The file 'expression.genebody.bed' for QTLtools have been generated successfully.")
+    
+    report_lines <- c(report_lines, paste0("- **Genebody BED file:** `", opt$output,".genebody.bed`"))
+    report_lines <- c(report_lines, paste0("  - Number of features: ", nrow(genebody_bed)))
+    report_lines <- c(report_lines, paste0("  - Number of samples: ", ncol(genebody_bed) - 6))
+    report_lines <- c(report_lines, "")
   } 
 }
 
@@ -405,26 +539,66 @@ if(!is.null(covar_hid)) {
   col2 <- colorRampPalette(c("#053061","#2166AC","#4393C3","#92C5DE",
                              "#D1E5F0", "#FFFFFF","#FDDBC7","#F4A582",
                              "#D6604D","#B2182B","#67001F"))
-  pdf(file = paste0("plot/",opt$output,"_",opt$method,"_covhid_cor.pdf"),
-      width = 10, height = 10)
+  
+  plotpdfname = paste0("_cov4QTL_",opt$method)
+  cor_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_covhid_cor.pdf"))
+  cor_png <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_covhid_cor.png"))
+  
+  pdf(cor_pdf, width = 10, height = 10)
   if(!is.null(covar_hid))
     if(ncol(covar_hid) != 1)
       corrplot(cor(covar_hid2),p.mat = cor.mtest(covar_hid2)$p, col = col2(200),
                insig = "p-value", order = "original",method = "ellipse",
                type = "lower", tl.pos = "d")
   dev.off()
+  
+  png(cor_png, width = 1000, height = 1000, res = 150)
+  if(!is.null(covar_hid))
+    if(ncol(covar_hid) != 1)
+      corrplot(cor(covar_hid2),p.mat = cor.mtest(covar_hid2)$p, col = col2(200),
+               insig = "p-value", order = "original",method = "ellipse",
+               type = "lower", tl.pos = "d")
+  dev.off()
+  
+  report_lines <- c(report_lines, "## Covariate Correlation Analysis")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "Correlation analysis was performed to assess relationships between covariates.")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![Covariate Correlation](assets/", opt$output,plotpdfname,"_covhid_cor.png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output,plotpdfname,"_covhid_cor.pdf`"))
+  report_lines <- c(report_lines, "")
 }
+
 ###  pvca  ########
 if(grepl("pvca|PVCA",opt$evaluate_method)) {
   if("lme4" %in% existpck) { #pvca
     if(!is.null(covar)) {
       cat("- Draw pvca plot - \n")
       if(ncol(covar) > 0) {
-        pdf(paste0("plot/",opt$output,"_",opt$method,"_pvca.pdf"),width = 12,height = 6)
+        plotpdfname = paste0("_cov4QTL_",opt$method)
+        pvca_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_pvca.pdf"))
+        pvca_png <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_pvca.png"))
+        
+        pdf(pvca_pdf,width = 12,height = 6)
         suppressMessages(pvcaresult <- pvca_evaluate(quant,covar_hid2, pct_threshold = 0.6,output = "cov4QTL"))
         print(pvcaresult$pic)
         dev.off()
+        
+        png(pvca_png,width = 1200,height = 600,res = 150)
+        suppressMessages(pvcaresult <- pvca_evaluate(quant,covar_hid2, pct_threshold = 0.6,output = "cov4QTL"))
+        print(pvcaresult$pic)
+        dev.off()
+        
         message("pvca plot was finished.") 
+        
+        report_lines <- c(report_lines, "## PVCA Evaluation")
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, paste0("![PVCA Plot](assets/", opt$output,plotpdfname,"_pvca.png)"))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output,plotpdfname,"_pvca.pdf`"))
+        report_lines <- c(report_lines, paste0("- **Threshold:** 0.6"))
+        report_lines <- c(report_lines, "")
       }
     }
   } else  cat(" - no lme4 pcakge, not draw PVCA plot.- \n")
@@ -432,12 +606,86 @@ if(grepl("pvca|PVCA",opt$evaluate_method)) {
 
 ### BIC #######
 if(grepl("bic|BIC",opt$evaluate_method)) {
+  # V2.1: Check data validity before BIC
+  valid_bicdata <- TRUE
+  if(!exists("quant") || is.null(quant) || nrow(quant) == 0 || ncol(quant) == 0) {
+    message("quant is not available or empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  } else if(!exists("covar_hid2") || is.null(covar_hid2) || nrow(covar_hid2) == 0) {
+    message("covar_hid2 is empty, skipping BIC plot.")
+    valid_bicdata <- FALSE
+  }
+  
+  if(valid_bicdata) {
+  plotpdfname = paste0("_cov4QTL_",opt$method)
   cat("- Draw BIC plot - \n")
-  pdf(paste0("plot/",opt$output,"_",opt$method,"_bic.pdf"),width = 12,height = 6)
+    cat("Note: BIC evaluation may take a long time depending on the number of features and cores used.\n")
+  
+  bic_pdf <- file.path(plot_dir, paste0(opt$output,plotpdfname,"_bic.pdf"))
+  bic_png <- file.path(assets_dir, paste0(opt$output,plotpdfname,"_bic.png"))
+  
+  pdf(bic_pdf,width = 12,height = 6)
   BICresult <- BIC_evaluate(quant,covar_hid2,num_cores = opt$BIC_cores,output = paste0("BIC estimation"))
   print(BICresult$pic)
   dev.off()
+  
+  png(bic_png,width = 1200,height = 600,res = 150)
+  BICresult <- BIC_evaluate(quant,covar_hid2,num_cores = opt$BIC_cores,output = paste0("BIC estimation"))
+  print(BICresult$pic)
+  dev.off()
+  
   message("BIC plot was finished.") 
+  
+  report_lines <- c(report_lines, "## BIC Evaluation")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("![BIC Plot](assets/", opt$output,plotpdfname,"_bic.png)"))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("- **PDF version:** `plot/", opt$output,plotpdfname,"_bic.pdf`"))
+  report_lines <- c(report_lines, paste0("- **Cores used:** ", opt$BIC_cores))
+  report_lines <- c(report_lines, "")
+  }  # end if(valid_bicdata)
 }
 cat(record)
 cat("----step2 cov4QTL runing finished ------\n")
+
+### Report Summary ########
+report_lines <- c(report_lines, "### Plot Files")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("- **PDF files:** `plot/` directory"))
+report_lines <- c(report_lines, paste0("- **PNG files:** `assets/` directory"))
+report_lines <- c(report_lines, "")
+plotpdfname = paste0("_cov4QTL_",opt$method)
+report_lines <- c(report_lines, paste0("- `", opt$output,plotpdfname,"_covhid_cor.png` (covariate correlation)"))
+if(grepl("pvca|PVCA",opt$evaluate_method)) {
+  report_lines <- c(report_lines, paste0("- `", opt$output,plotpdfname,"_pvca.png` (PVCA plot)"))
+}
+if(grepl("bic|BIC",opt$evaluate_method)) {
+  report_lines <- c(report_lines, paste0("- `", opt$output,plotpdfname,"_bic.png` (BIC plot)"))
+}
+if(opt$method == "peer") {
+  report_lines <- c(report_lines, paste0("- `peer_variance_factor_",opt$output,".png` (PEER factor variance)"))
+}
+if(opt$method == "pca") {
+  report_lines <- c(report_lines, paste0("- `PCA_variance_factor_",opt$output,".png` (PCA scree plot)"))
+}
+report_lines <- c(report_lines, "")
+
+if(exists("nFactor")) {
+  report_lines <- c(report_lines, paste0("- **Hidden factors (nFactor):** ", nFactor))
+}
+if(exists("K_BE")) {
+  report_lines <- c(report_lines, paste0("- **PCs selected by BE method:** ", K_BE))
+}
+if(exists("K_elbow")) {
+  report_lines <- c(report_lines, paste0("- **PCs selected by Elbow method:** ", K_elbow))
+}
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "---")
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, paste0("*Report generated at:* ", Sys.time()))
+report_lines <- c(report_lines, "")
+report_lines <- c(report_lines, "*Generated by step2_cov4QTL v2.1*")
+
+# Write report file
+writeLines(report_lines, report_file)
+message("\nMarkdown report saved to: ", report_file)

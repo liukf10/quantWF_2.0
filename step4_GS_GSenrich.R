@@ -50,10 +50,11 @@ GS2GSenrich <- function(genelist1,genelist2,universe=NULL) {
   list(enrichfold=enrichfold, Z=Z,
        p = p, count= count)
 }
+
 HeatMapMe = function(GS2GS, transpose = FALSE, pcutoff = 0.05, 
                      filename = NULL,width = 6, height = 7,
                      cex.text = 1, xLabelsAngle = 0,xLabelsAdj = 0.5,
-                     mar =  c(5, 4, 4, 2) + 0.1){
+                     mar =  c(5, 4, 4, 2) + 0.1, plotdir = "plot"){
   if(transpose) {
     p <- data.frame(t(GS2GS$p))
     count = t(GS2GS$count);
@@ -71,15 +72,39 @@ HeatMapMe = function(GS2GS, transpose = FALSE, pcutoff = 0.05,
   textMatrix = paste(as.matrix(count), "\n(", as.matrix(p), ")", sep = "")
   dim(textMatrix) = dim(count)
   textMatrix[textMatrix == "\n()"] <- ""
-  if(!is.null(filename)) pdf(filename, width = width, height = height)
-  par(mar = mar) #bottom  left top right 
-  WGCNA::labeledHeatmap(Matrix = enrichfold, xLabels = colnames(p), 
-                        yLabels = rownames(p), cex.lab = 1, colorLabels = TRUE, 
-                        colors = WGCNA::blueWhiteRed(100)[51:100], textMatrix = textMatrix, 
-                        setStdMargins = FALSE, cex.text = cex.text, xLabelsAngle = xLabelsAngle,xLabelsAdj = xLabelsAdj)
-  if(!is.null(filename))  dev.off()
+  
+  # 创建 plot 目录
+  if(!is.null(filename)) {
+    if(!dir.exists(plotdir)) dir.create(plotdir)
+    
+    # 保存 PDF
+    pdf(file.path(plotdir, paste0(filename, ".pdf")), width = width, height = height)
+    par(mar = mar)
+    WGCNA::labeledHeatmap(Matrix = enrichfold, xLabels = colnames(p), 
+                          yLabels = rownames(p), cex.lab = 1, colorLabels = TRUE, 
+                          colors = WGCNA::blueWhiteRed(100)[51:100], textMatrix = textMatrix, 
+                          setStdMargins = FALSE, cex.text = cex.text, xLabelsAngle = xLabelsAngle,xLabelsAdj = xLabelsAdj)
+    dev.off()
+    
+    # 保存 PNG
+    png(file.path(plotdir, paste0(filename, ".png")), width = width * 100, height = height * 100, res = 100)
+    par(mar = mar)
+    WGCNA::labeledHeatmap(Matrix = enrichfold, xLabels = colnames(p), 
+                          yLabels = rownames(p), cex.lab = 1, colorLabels = TRUE, 
+                          colors = WGCNA::blueWhiteRed(100)[51:100], textMatrix = textMatrix, 
+                          setStdMargins = FALSE, cex.text = cex.text, xLabelsAngle = xLabelsAngle,xLabelsAdj = xLabelsAdj)
+    dev.off()
+    
+    cat("Heatmap saved to ", file.path(plotdir, paste0(filename, ".pdf")), " and ", 
+        file.path(plotdir, paste0(filename, ".png")), "\n")
+  } else {
+    par(mar = mar)
+    WGCNA::labeledHeatmap(Matrix = enrichfold, xLabels = colnames(p), 
+                          yLabels = rownames(p), cex.lab = 1, colorLabels = TRUE, 
+                          colors = WGCNA::blueWhiteRed(100)[51:100], textMatrix = textMatrix, 
+                          setStdMargins = FALSE, cex.text = cex.text, xLabelsAngle = xLabelsAngle,xLabelsAdj = xLabelsAdj)
+  }
 }
-
 
 G2GSenrich <- function(gene,genelist2,universe=NULL) {
   genelist2 = genelist2[!is.na(genelist2$gene),]
@@ -119,5 +144,48 @@ compareEnrichRes <- function(enrichlist,path = path) {
   temp
 }
 
-
-
+# 新增：生成 Gene Set Enrichment 分析报告的函数
+gs_enrich_report <- function(GS2GS_result, filename = "GS_enrich_report", 
+                              genelist1_name = "Gene Set 1", 
+                              genelist2_name = "Gene Set 2",
+                              pcutoff = 0.05) {
+  if(!dir.exists("plot")) dir.create("plot")
+  
+  # 生成热图
+  HeatMapMe(GS2GS_result, filename = filename, pcutoff = pcutoff)
+  
+  # 统计显著富集的数量
+  p_matrix <- GS2GS_result$p
+  sig_count <- sum(p_matrix < pcutoff, na.rm = TRUE)
+  total_tests <- length(p_matrix)
+  
+  # 准备 Markdown 报告内容
+  md_content <- paste0("# Step 4: Gene Set to Gene Set Enrichment Analysis Report\n\n")
+  
+  md_content <- paste0(md_content, "## Input Information\n")
+  md_content <- paste0(md_content, "- Gene Set 1: ", genelist1_name, "\n")
+  md_content <- paste0(md_content, "- Gene Set 2: ", genelist2_name, "\n")
+  md_content <- paste0(md_content, "\n")
+  
+  md_content <- paste0(md_content, "## Parameters\n")
+  md_content <- paste0(md_content, "- p-value cutoff: ", pcutoff, "\n")
+  md_content <- paste0(md_content, "\n")
+  
+  md_content <- paste0(md_content, "## Results Summary\n")
+  md_content <- paste0(md_content, "- Total tests: ", total_tests, "\n")
+  md_content <- paste0(md_content, "- Significant enrichments (p < ", pcutoff, "): ", sig_count, "\n")
+  md_content <- paste0(md_content, "- Significance rate: ", round(sig_count/total_tests * 100, 2), "%\n")
+  md_content <- paste0(md_content, "\n")
+  
+  md_content <- paste0(md_content, "## Plots\n\n")
+  md_content <- paste0(md_content, "### Enrichment Heatmap\n")
+  md_content <- paste0(md_content, "![Enrichment Heatmap](plot/", filename, ".png)\n\n")
+  
+  md_content <- paste0(md_content, "## Output Files\n")
+  md_content <- paste0(md_content, "- PDF plot: plot/", filename, ".pdf\n")
+  md_content <- paste0(md_content, "- PNG plot: plot/", filename, ".png\n")
+  
+  # 写入 Markdown 报告
+  writeLines(md_content, paste0(filename, ".md"))
+  cat("Markdown report saved to ", paste0(filename, ".md\n"))
+}

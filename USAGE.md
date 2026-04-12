@@ -145,14 +145,21 @@ source("step1_rna_R")
 | 4 | TMM/Quantile标准化 | 文库大小校正 |
 | 5 | INT转换 | 逆正态转换，用于QTL分析 |
 
-**输出文件**（假设output="rna"）:
-- `rna_rmOut.RData`: 移除异常样本后的数据
-- `rna_rmOut_filter.RData`: 过滤低表达基因后的数据
-- `rna_rmOut_filter_TMM.RData`: TMM标准化结果
-- `rna_log2_TMM.RData`: log2转换后结果（用于后续分析）
-- `rna_rmOut_filter_TMM_INT.RData`: INT转换结果（用于QTL）
-- `plot/rna_step1_pcaplot.pdf`: PCA图
-- `plot/rna_sample&gene distribution.pdf`: 样本和基因分布图
+**输出文件**（假设output="rna"，outputdir="./output"）：
+
+| 文件 | 路径 | 说明 |
+|:---|:---|:---|
+| `rna_rmOut.RData` | `outputdir/` | 移除异常样本后的数据 |
+| `rna_rmOut_filter.RData` | `outputdir/` | 过滤低表达基因后的数据 |
+| `rna_rmOut_filter_TMM.RData` | `outputdir/` | TMM标准化结果 |
+| `rna_log_TMM.RData` | `outputdir/` | log2转换后结果（用于后续分析） |
+| `rna_rmOut_filter_TMM_INT.RData` | `outputdir/` | INT转换结果（用于QTL） |
+| `rna_report.md` | `outputdir/` | Markdown分析报告 |
+| `rna_step1_pca.pdf` | `outputdir/plot/` | PCA图（多页PDF） |
+| `rna_step1_pca_*.png` | `outputdir/assets/` | PCA图（PNG，按raw→cpm→filter→norm→INT顺序） |
+| `rna_step1_distribution.pdf` | `outputdir/plot/` | 样本和基因分布图（PDF） |
+| `rna_step1_box_*.png` | `outputdir/assets/` | 各阶段样本箱线图 |
+| `rna_step1_density_*.png` | `outputdir/assets/` | 各阶段基因密度图 |
 
 ### 1.2 Count+TPM 预处理 (step1_countTPM_R)
 
@@ -231,12 +238,21 @@ source("step2_covariate_adj_R")
 
 #### 输出文件
 
-- `*_adj_obs.RData`: 已知协变量校正结果（仅obs+hid模式）
-- `*_adj_final.RData`: 最终校正结果
-- `plot/*_cov_cor.pdf`: 协变量相关性热图
-- `plot/*_pcaplot.pdf`: 校正前后PCA图
-- `plot/*_pvca.pdf`: PVCA分析图
-- `plot/*_bic.pdf`: BIC分析图
+| 文件 | 路径 | 说明 |
+|:---|:---|:---|
+| `*_adj_obs.RData` | `outputdir/` | 已知协变量校正结果（仅obs+hid模式） |
+| `*_adj_final.RData` | `outputdir/` | 最终校正结果 |
+| `*_report.md` | `outputdir/` | Markdown分析报告 |
+| `*_cov_cor.pdf` | `outputdir/plot/` | 协变量相关性热图（PDF） |
+| `*_cov_cor.png` | `outputdir/assets/` | 协变量相关性热图（PNG） |
+| `*_step2_*_pca.pdf` | `outputdir/plot/` | 校正前后PCA图（PDF，多页） |
+| `*_step2_*_pca_*.png` | `outputdir/assets/` | PCA图（PNG，按协变量分组） |
+| `*_step2_*_pvca.pdf` | `outputdir/plot/` | PVCA分析图（PDF） |
+| `*_step2_*_pvca.png` | `outputdir/assets/` | PVCA分析图（PNG） |
+| `*_step2_*_bic.pdf` | `outputdir/plot/` | BIC分析图（PDF） |
+| `*_step2_*_bic.png` | `outputdir/assets/` | BIC分析图（PNG） |
+| `*_step2_box_*.png` | `outputdir/assets/` | 样本分布箱线图 |
+| `*_step2_density_*.png` | `outputdir/assets/` | 基因密度图 |
 
 ### 2.2 批次校正 (step2_batch_adj_R)
 
@@ -271,9 +287,21 @@ source("step2_cov4QTL_R")
 ```
 
 **输出文件**:
-- `*_pca_covariate4QTL.txt`: 协变量文件
-- `*.tss.tensor.bed`: tensorQTL格式表达矩阵
-- `*.tss.bed`: QTLtools TSS格式
+
+| 文件 | 路径 | 说明 |
+|:---|:---|:---|
+| `*_pca_covariate4QTL.txt` | `outputdir/` | 协变量文件 |
+| `*.tss.tensor.bed` | `outputdir/` | tensorQTL格式表达矩阵 |
+| `*.tss.bed` | `outputdir/` | QTLtools TSS格式 |
+| `*_report.md` | `outputdir/` | Markdown分析报告 |
+| `PCA_variance_factor_*.pdf` | `outputdir/plot/` | PCA scree plot（PDF） |
+| `PCA_variance_factor_*.png` | `outputdir/assets/` | PCA scree plot（PNG） |
+| `*_covhid_cor.pdf` | `outputdir/plot/` | 协变量相关性热图（PDF） |
+| `*_covhid_cor.png` | `outputdir/assets/` | 协变量相关性热图（PNG） |
+| `*_pvca.pdf` | `outputdir/plot/` | PVCA分析图（PDF） |
+| `*_pvca.png` | `outputdir/assets/` | PVCA分析图（PNG） |
+| `*_bic.pdf` | `outputdir/plot/` | BIC分析图（PDF） |
+| `*_bic.png` | `outputdir/assets/` | BIC分析图（PNG） |
 
 ---
 
@@ -408,17 +436,23 @@ result <- gsea_1_step(
 
 ### 图形输出
 
-所有图形保存在 `plot/` 目录：
+图形输出分为两个目录：
+- **`plot/`** 目录：保存高分辨率 PDF 文件（适合发表）
+- **`assets/`** 目录：保存 PNG 文件（用于 Markdown 报告嵌入）
 
-| 文件名模式 | 内容 |
-|:---|:---|
-| `*_step1_pcaplot.pdf` | Step 1各阶段PCA图 |
-| `*_sample&gene distribution.pdf` | 样本箱线图和基因密度图 |
-| `*_outliersample.pdf` | 异常样本检测图 |
-| `*_cov_cor.pdf` | 协变量相关性热图 |
-| `*-adj_*_pcaplot.pdf` | 校正前后PCA对比 |
-| `*-adj_*_pvca.pdf` | PVCA分析图 |
-| `*-adj_*_bic.pdf` | BIC分析图 |
+| 文件名模式 | 格式 | 内容 |
+|:---|:---:|:---|
+| `*_step1_pca_*.pdf/png` | PDF/PNG | Step 1各阶段PCA图（按 raw→cpm→rm→norm→INT 顺序排列） |
+| `*_step1_distribution.pdf/png` | PDF/PNG | 样本箱线图和基因密度图 |
+| `*_step1_box_*.png` | PNG | 各阶段样本箱线图（raw, cpm, filter, norm, INT） |
+| `*_step1_density_*.png` | PNG | 各阶段基因密度图 |
+| `*_outliersample.pdf` | PDF | 异常样本检测图 |
+| `*_cov_cor.pdf/png` | PDF/PNG | 协变量相关性热图 |
+| `*_step2_*_pca.pdf/png` | PDF/PNG | Step 2校正前后PCA对比 |
+| `*_step2_*_pvca.pdf/png` | PDF/PNG | PVCA分析图 |
+| `*_step2_*_bic.pdf/png` | PDF/PNG | BIC分析图 |
+| `*_step2_box_*.png` | PNG | Step 2各阶段样本分布箱线图 |
+| `*_step2_density_*.png` | PNG | Step 2各阶段基因密度图 |
 
 ---
 

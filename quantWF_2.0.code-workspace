@@ -1,0 +1,20 @@
+"terminal.integrated.profiles.windows": {
+    "Radian": {
+        "path": "radian",
+        "args": ["--encoding=utf-8"]
+    }
+},
+"terminal.integrated.defaultProfile.windows": "Radian",
+"r.bracketedPaste": true,
+"files.autoGuessEncoding": true
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../../VibeCodingRegion/cerebral_ischemia"
+		}
+	],
+	"settings": {}
+}
