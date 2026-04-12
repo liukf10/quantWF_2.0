@@ -3,7 +3,7 @@
 #Maintainer: Kefu Liu
 #Date: March 25, 2026
 #Software: R
-#V2.1: 添加outputdir参数支持指定输出目录
+#V2.1: 添加outputdir参数支持指定输出目录, 添加funcdir参数支持指定预处理函数目录, 添加idinf_col参数支持指定基因标签列
 
 #log2FCcut = 1; adjPcut = 0.05; 
 #var.equal=TRUE; do_ttest = FALSE; small_size = TRUE
@@ -35,9 +35,17 @@ option_list = list(
   make_option("--log2FCcut", action="store", default=NA,
               type='numeric',help="log2FC cutoff, default is 1."),
   make_option("--adjPcut", action="store", default= NA,
-              type='numeric',help="adj Pvalue cutoff, default is 0.05.")
+              type='numeric',help="adj Pvalue cutoff, default is 0.05."),
+  make_option("--funcdir", action="store", default=NA,
+              type='character',help="preprocess function file path"),
+  make_option(c("-i", "--idinf_col"), type="character", default="SYMBOL",
+              help="Column in IDinf to use for gene labels [default: SYMBOL]", metavar="character")
 )
 opt = parse_args(OptionParser(option_list=option_list))
+opt = list(input = opt$input, output = opt$output, outputdir = opt$outputdir, 
+           funcdir = opt$funcdir, grpname = opt$grpname, groupA = opt$groupA, 
+           groupB = opt$groupB, do_ttest = opt$do_ttest, varequal = opt$varequal,
+           log2FCcut = opt$log2FCcut, adjPcut = opt$adjPcut, idinf_col = opt$idinf_col)
 rmobj <- c(names(opt),"opt","option_list","allobj","allobj2","quant","loginfo","existpck","funcpath")
 allobj <- ls(); allobj <- allobj[!allobj %in% c("rmobj",rmobj)]
 ### 0 parameters evaluate&read input ######
@@ -57,6 +65,31 @@ if(is.na(opt$adjPcut)) {
   opt$adjPcut = 0.05; message("Setting adjPcut as default: 0.05.")}
 if(is.na(opt$var.equal)) {
   opt$var.equal = TRUE; message("Setting var.equal as default: TRUE.")}
+if(is.na(opt$idinf_col)) {
+  opt$idinf_col = "SYMBOL"; message("Setting idinf_col as default: SYMBOL.")}
+
+### 0.1 funcdir evaluate and source preprocess_func.R ######
+if(is.na(opt$funcdir)) {
+  warning('funcdir is setting to NA, means preprocess_func.R in the default dir');
+  if(file.exists("preprocess_func.R")) 
+    source("preprocess_func.R") else 
+      stop("No preprocess_func.R file in fundir path.")
+} else {
+  if(tail(unlist(strsplit(opt$funcdir,"")),1) == "/"){
+    funcpath = paste0(opt$funcdir,"preprocess_func.R");
+  } else {
+    opt$funcdir <-  paste0(opt$funcdir,"/")
+    funcpath = paste0(opt$funcdir,"preprocess_func.R");}
+  if(file.exists(funcpath)) 
+    source(funcpath) else
+      stop("No preprocess_func.R file in fundir path.")
+}
+
+# Create plot and assets directories
+plot_dir <- file.path(opt$outputdir, "plot")
+if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
+assets_dir <- file.path(opt$outputdir, "assets")
+if(!dir.exists(assets_dir)) dir.create(assets_dir, recursive = TRUE)
 
 ### Function to find previous step report ####
 find_prev_step_report <- function(input_file, outputdir) {
@@ -111,15 +144,8 @@ find_prev_step_report <- function(input_file, outputdir) {
 }
 
 ### Initialize Report ####
-# Load preprocess_func.R for report utility functions
-funcpath <- "preprocess_func.R"
-if(file.exists(funcpath)) {
-  source(funcpath)
-  report_funcs_available <- TRUE
-} else {
-  report_funcs_available <- FALSE
-  warning("preprocess_func.R not found. Report generation will be skipped.")
-}
+# preprocess_func.R is already loaded in section 0.1
+report_funcs_available <- TRUE
 
 if(!is.na(opt$input)) {
   if(grepl("\\.RData$",opt$input)) {
@@ -177,9 +203,20 @@ if(report_funcs_available && exists("check_existing_report")) {
     init_report(opt$outputdir, opt$output, "Step 3: Differential Expression Analysis", append = FALSE, step_suffix = "step3")
     
     # Write executed code
-    cmd_line <- paste(commandArgs(trailingOnly = TRUE), collapse = " ")
-    code_block <- sprintf("Rscript step3_DEG_classic_cmd %s", cmd_line)
-    write_executed_code(report_file, code_block, type = "bash")
+    code_block <- sprintf('input <- "%s"\noutput <- "%s"\noutputdir <- "%s"\nfuncdir <- "%s"\ngroupA <- "%s"\ngroupB <- "%s"\ngrpname <- "%s"\nlog2FCcut <- %s\nadjPcut <- %s\nvarequal <- %s\ndo_ttest <- %s\nidinf_col <- "%s"\nsource("step3_DEG_classic_R")',
+                          ifelse(is.na(opt$input), "NA", opt$input),
+                          opt$output,
+                          ifelse(is.na(opt$outputdir), ".", opt$outputdir),
+                          ifelse(is.na(opt$funcdir), "NA", opt$funcdir),
+                          ifelse(is.na(opt$groupA), "NA", opt$groupA),
+                          ifelse(is.na(opt$groupB), "NA", opt$groupB),
+                          ifelse(is.na(opt$grpname), "group", opt$grpname),
+                          ifelse(is.na(opt$log2FCcut), 1, opt$log2FCcut),
+                          ifelse(is.na(opt$adjPcut), 0.05, opt$adjPcut),
+                          ifelse(is.na(opt$varequal), TRUE, opt$varequal),
+                          ifelse(is.na(opt$do_ttest), "NA", opt$do_ttest),
+                          opt$idinf_col)
+    write_executed_code(report_file, code_block, type = "r")
     write_parameters(report_file, opt)
     
     # Add previous step report link
@@ -194,9 +231,20 @@ if(report_funcs_available && exists("check_existing_report")) {
     cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
     
     # Write executed code for this run
-    cmd_line <- paste(commandArgs(trailingOnly = TRUE), collapse = " ")
-    code_block <- sprintf("Rscript step3_DEG_classic_cmd %s", cmd_line)
-    write_executed_code(report_file, code_block, type = "bash")
+    code_block <- sprintf('input <- "%s"\noutput <- "%s"\noutputdir <- "%s"\nfuncdir <- "%s"\ngroupA <- "%s"\ngroupB <- "%s"\ngrpname <- "%s"\nlog2FCcut <- %s\nadjPcut <- %s\nvarequal <- %s\ndo_ttest <- %s\nidinf_col <- "%s"\nsource("step3_DEG_classic_R")',
+                          ifelse(is.na(opt$input), "NA", opt$input),
+                          opt$output,
+                          ifelse(is.na(opt$outputdir), ".", opt$outputdir),
+                          ifelse(is.na(opt$funcdir), "NA", opt$funcdir),
+                          ifelse(is.na(opt$groupA), "NA", opt$groupA),
+                          ifelse(is.na(opt$groupB), "NA", opt$groupB),
+                          ifelse(is.na(opt$grpname), "group", opt$grpname),
+                          ifelse(is.na(opt$log2FCcut), 1, opt$log2FCcut),
+                          ifelse(is.na(opt$adjPcut), 0.05, opt$adjPcut),
+                          ifelse(is.na(opt$varequal), TRUE, opt$varequal),
+                          ifelse(is.na(opt$do_ttest), "NA", opt$do_ttest),
+                          opt$idinf_col)
+    write_executed_code(report_file, code_block, type = "r")
     write_parameters(report_file, opt)
     
     # Add previous step report link
@@ -431,10 +479,6 @@ if(small_size) {
 cat("--- saved in ",file.path(opt$outputdir, paste0(opt$output,"_DEG_classic.RData"))," and ",file.path(opt$outputdir, paste0(opt$output,"_diffstat_classic.RData"))," ---\n",sep = "")
 
 ### Generate Plots and Update Report ####
-# Create plot directory
-plot_dir <- file.path(opt$outputdir, "plot")
-if(!dir.exists(plot_dir)) dir.create(plot_dir, recursive = TRUE)
-
 # Load required libraries for plotting
 if(!requireNamespace("ggplot2", quietly = TRUE)) {
   message("ggplot2 not available, skipping plot generation.")
@@ -606,12 +650,57 @@ if(generate_plots) {
 
 ### Write Report Summary ####
 if(report_initialized) {
-  cat("### Analysis Results\n\n", file = report_file, append = TRUE)
+  # Initialize report_lines vector (参考step2风格)
+  report_lines <- c()
   
-  # Statistics summary
-  cat("#### DEG Statistics\n\n", file = report_file, append = TRUE)
-  cat("| Comparison | Test | Total DEGs | Up-regulated | Down-regulated |\n", file = report_file, append = TRUE)
-  cat("|------------|------|------------|--------------|----------------|\n", file = report_file, append = TRUE)
+  # Report header
+  report_lines <- c(report_lines, "# Step 3: Differential Expression Analysis")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("**Analysis Date:** ", Sys.time()))
+  report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
+  report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
+  report_lines <- c(report_lines, "")
+  
+  # Previous Step Report link (if found)
+  if(!is.null(prev_report_file) && !is.null(prev_step)) {
+    report_lines <- c(report_lines, "## Previous Step Report")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("**Linked Report:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")"))
+    report_lines <- c(report_lines, "")
+  }
+  
+  # Input Information section
+  report_lines <- c(report_lines, "## Input Information")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Item | Value |")
+  report_lines <- c(report_lines, "|------|-------|")
+  report_lines <- c(report_lines, sprintf("| Input file | `%s` |", ifelse(is.na(opt$input), "Using quant object", opt$input)))
+  report_lines <- c(report_lines, sprintf("| Sample count | %d |", ncol(quant)))
+  report_lines <- c(report_lines, sprintf("| Feature count | %d |", nrow(quant)))
+  report_lines <- c(report_lines, sprintf("| Group variable | %s |", opt$grpname))
+  report_lines <- c(report_lines, "")
+  
+  # Group Information section
+  report_lines <- c(report_lines, "## Group Information")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Group | Sample Count |")
+  report_lines <- c(report_lines, "|-------|-------------|")
+  
+  # Add group information for all groups
+  all_groups <- unique(c(opt$groupA, opt$groupB))
+  for(grp in all_groups) {
+    grp_count <- length(which(group_list == grp))
+    report_lines <- c(report_lines, sprintf("| %s | %d |", grp, grp_count))
+  }
+  report_lines <- c(report_lines, "")
+  
+  # Analysis Results section
+  report_lines <- c(report_lines, "## Analysis Results")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "### DEG Statistics")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Comparison | Test | Total DEGs | Up-regulated | Down-regulated |")
+  report_lines <- c(report_lines, "|------------|------|------------|--------------|----------------|")
   
   if(small_size) {
     # Only t-test results
@@ -621,8 +710,8 @@ if(report_initialized) {
       up_count <- sum(result$log2FC > opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count <- sum(result$log2FC < -opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count <- up_count + down_count
-      test_type <- if(opt$var.equal) "Student t-test" else "Welch t-test"
-      cat(sprintf("| %s | %s | %d | %d | %d |\n", comp_name, test_type, total_count, up_count, down_count), file = report_file, append = TRUE)
+      test_type <- if(opt$varequal) "Student t-test" else "Welch t-test"
+      report_lines <- c(report_lines, sprintf("| %s | %s | %d | %d | %d |", comp_name, test_type, total_count, up_count, down_count))
     }
   } else if(opt$do_ttest) {
     # Both t-test and wilcoxon results
@@ -632,14 +721,14 @@ if(report_initialized) {
       up_count_t <- sum(result_t$log2FC > opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count_t <- sum(result_t$log2FC < -opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count_t <- up_count_t + down_count_t
-      t_type <- if(opt$var.equal) "Student t-test" else "Welch t-test"
-      cat(sprintf("| %s (t-test) | %s | %d | %d | %d |\n", comp_name, t_type, total_count_t, up_count_t, down_count_t), file = report_file, append = TRUE)
+      t_type <- if(opt$varequal) "Student t-test" else "Welch t-test"
+      report_lines <- c(report_lines, sprintf("| %s (t-test) | %s | %d | %d | %d |", comp_name, t_type, total_count_t, up_count_t, down_count_t))
       
       result_w <- wilcox_result_all[[i]]
       up_count_w <- sum(result_w$log2FC > opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count_w <- sum(result_w$log2FC < -opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count_w <- up_count_w + down_count_w
-      cat(sprintf("| %s (Wilcoxon) | Wilcoxon | %d | %d | %d |\n", comp_name, total_count_w, up_count_w, down_count_w), file = report_file, append = TRUE)
+      report_lines <- c(report_lines, sprintf("| %s (Wilcoxon) | Wilcoxon | %d | %d | %d |", comp_name, total_count_w, up_count_w, down_count_w))
     }
   } else {
     # Only wilcoxon results
@@ -649,68 +738,97 @@ if(report_initialized) {
       up_count <- sum(result$log2FC > opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count <- sum(result$log2FC < -opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count <- up_count + down_count
-      cat(sprintf("| %s | Wilcoxon | %d | %d | %d |\n", comp_name, total_count, up_count, down_count), file = report_file, append = TRUE)
+      report_lines <- c(report_lines, sprintf("| %s | Wilcoxon | %d | %d | %d |", comp_name, total_count, up_count, down_count))
     }
   }
-  cat("\n", file = report_file, append = TRUE)
+  report_lines <- c(report_lines, "")
   
-  # Parameters used
-  cat("**Analysis Parameters**:\n\n", file = report_file, append = TRUE)
-  cat(sprintf("- Log2 Fold Change cutoff: %s\n", opt$log2FCcut), file = report_file, append = TRUE)
-  cat(sprintf("- Adjusted p-value cutoff: %s\n", opt$adjPcut), file = report_file, append = TRUE)
-  cat(sprintf("- Group variable: %s\n", opt$grpname), file = report_file, append = TRUE)
-  cat(sprintf("- Group A: %s\n", paste(opt$groupA, collapse = ", ")), file = report_file, append = TRUE)
-  cat(sprintf("- Group B: %s\n\n", paste(opt$groupB, collapse = ", ")), file = report_file, append = TRUE)
-  
-  # Plots section
+  # Visualization section
   if(generate_plots && length(plot_list) > 0) {
-    cat("#### Visualization\n\n", file = report_file, append = TRUE)
-    cat("Generated plots (both PDF and PNG formats):\n\n", file = report_file, append = TRUE)
+    report_lines <- c(report_lines, "### Visualization")
+    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, "Generated plots (both PDF and PNG formats):")
+    report_lines <- c(report_lines, "")
     
     if(small_size) {
       for(i in seq_along(ttest_result_all)) {
         comp_name <- names(ttest_result_all)[i]
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        cat(sprintf("**%s (t-test)**\n\n", comp_name), file = report_file, append = TRUE)
-        cat(sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
-        cat(sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        report_lines <- c(report_lines, sprintf("**%s (t-test)**", comp_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
       }
     } else if(opt$do_ttest) {
       for(i in seq_along(ttest_result_all)) {
         comp_name <- names(ttest_result_all)[i]
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        cat(sprintf("**%s**\n\n", comp_name), file = report_file, append = TRUE)
-        cat(sprintf("- Volcano Plot (t-test):\n  ![Volcano](plot/%s_volcano_%s_ttest.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
-        cat(sprintf("- MA Plot (t-test):\n  ![MA Plot](plot/%s_ma_%s_ttest.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
-        cat(sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
-        cat(sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        report_lines <- c(report_lines, sprintf("**%s**", comp_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- Volcano Plot (t-test):\n  ![Volcano](plot/%s_volcano_%s_ttest.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- MA Plot (t-test):\n  ![MA Plot](plot/%s_ma_%s_ttest.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
       }
     } else {
       for(i in seq_along(wilcox_result_all)) {
         comp_name <- names(wilcox_result_all)[i]
         safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        cat(sprintf("**%s (Wilcoxon)**\n\n", comp_name), file = report_file, append = TRUE)
-        cat(sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
-        cat(sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)\n\n", opt$output, safe_name), file = report_file, append = TRUE)
+        report_lines <- c(report_lines, sprintf("**%s (Wilcoxon)**", comp_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](plot/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
+        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](plot/%s_ma_%s_wilcox.png)", opt$output, safe_name))
+        report_lines <- c(report_lines, "")
       }
     }
   }
   
-  # Loginfo
-  cat("#### Processing Log\n\n", file = report_file, append = TRUE)
-  cat("```\n", file = report_file, append = TRUE)
-  cat(loginfo1$record, file = report_file, append = TRUE)
-  cat("\n```\n\n", file = report_file, append = TRUE)
+  # Parameters Used section
+  report_lines <- c(report_lines, "## Parameters Used")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, sprintf("- **Log2 Fold Change cutoff:** %s", opt$log2FCcut))
+  report_lines <- c(report_lines, sprintf("- **Adjusted p-value cutoff:** %s", opt$adjPcut))
+  report_lines <- c(report_lines, sprintf("- **Group variable:** %s", opt$grpname))
+  report_lines <- c(report_lines, sprintf("- **Group A:** %s", paste(opt$groupA, collapse = ", ")))
+  report_lines <- c(report_lines, sprintf("- **Group B:** %s", paste(opt$groupB, collapse = ", ")))
+  report_lines <- c(report_lines, sprintf("- **Equal variance:** %s", opt$varequal))
+  report_lines <- c(report_lines, sprintf("- **ID info column:** %s", opt$idinf_col))
+  report_lines <- c(report_lines, "")
   
-  # Generated files
-  cat("#### Generated Files\n\n", file = report_file, append = TRUE)
-  cat(sprintf("- **DEG result file**: `%s`\n", paste0(opt$output, "_DEG_classic.RData")), file = report_file, append = TRUE)
-  cat(sprintf("  - Contains filtered DEG results (|log2FC| > %s & adj.P < %s)\n", opt$log2FCcut, opt$adjPcut), file = report_file, append = TRUE)
-  cat(sprintf("- **Statistics file**: `%s`\n", paste0(opt$output, "_diffstat_classic.RData")), file = report_file, append = TRUE)
-  cat("  - Contains complete statistical results for all features\n", file = report_file, append = TRUE)
-  cat(sprintf("- **Plot directory**: `plot/`\n"), file = report_file, append = TRUE)
-  cat("  - Contains volcano plots and MA plots (PDF and PNG formats)\n", file = report_file, append = TRUE)
-  cat(sprintf("- **Report file**: `%s`\n\n", paste0(opt$output, "_report.md")), file = report_file, append = TRUE)
+  # Output Files section
+  report_lines <- c(report_lines, "## Output Files")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| File | Description |")
+  report_lines <- c(report_lines, "|------|-------------|")
+  report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
+  report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
+  report_lines <- c(report_lines, "| `plot/*_volcano_*.png` | Volcano plots |")
+  report_lines <- c(report_lines, "| `plot/*_ma_*.png` | MA plots |")
+  report_lines <- c(report_lines, "")
   
-  cat("Analysis completed at: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n", file = report_file, append = TRUE)
+  # Processing Log section
+  report_lines <- c(report_lines, "## Processing Log")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "```")
+  report_lines <- c(report_lines, loginfo1$record)
+  report_lines <- c(report_lines, "```")
+  report_lines <- c(report_lines, "")
+  
+  # Completion marker
+  report_lines <- c(report_lines, "---")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, paste0("*Analysis completed at:* ", format(Sys.time(), "%Y-%m-%d %H:%M:%S")))
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "*Generated by step3_DEG_classic v2.1*")
+  
+  # Write report file using writeLines (参考step2风格)
+  writeLines(report_lines, report_file)
+  message("Markdown report saved to: ", report_file)
 }
