@@ -736,7 +736,7 @@ if(generate_plots) {
       # Volcano plot
       volc_plot <- create_volcano_plot(result, comp_name, opt$log2FCcut, opt$adjPcut, id_col)
       if(!is.null(volc_plot)) {
-        plot_files <- save_plot_both(volc_plot, paste0(opt$output, "_volcano_", safe_name), width = 10, height = 8)
+        plot_files <- save_plot_both(volc_plot, paste0("step3_volcano_", safe_name), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_volcano")]] <- plot_files$png
         message(paste0("  Volcano plot saved: ", basename(plot_files$png)))
       }
@@ -744,7 +744,7 @@ if(generate_plots) {
       # MA plot
       ma_plot <- create_ma_plot(result, comp_name, opt$log2FCcut, opt$adjPcut, id_col)
       if(!is.null(ma_plot)) {
-        plot_files <- save_plot_both(ma_plot, paste0(opt$output, "_ma_", safe_name), width = 10, height = 8)
+        plot_files <- save_plot_both(ma_plot, paste0("step3_ma_", safe_name), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_ma")]] <- plot_files$png
         message(paste0("  MA plot saved: ", basename(plot_files$png)))
       }
@@ -764,7 +764,7 @@ if(generate_plots) {
       # T-test volcano
       volc_plot_t <- create_volcano_plot(result_t, paste0(comp_name, " (t-test)"), opt$log2FCcut, opt$adjPcut, id_col_t)
       if(!is.null(volc_plot_t)) {
-        plot_files <- save_plot_both(volc_plot_t, paste0(opt$output, "_volcano_", safe_name, "_ttest"), width = 10, height = 8)
+        plot_files <- save_plot_both(volc_plot_t, paste0("step3_volcano_", safe_name, "_ttest"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_volcano_ttest")]] <- plot_files$png
         message(paste0("  Volcano plot (t-test) saved: ", basename(plot_files$png)))
       }
@@ -772,7 +772,7 @@ if(generate_plots) {
       # T-test MA plot
       ma_plot_t <- create_ma_plot(result_t, paste0(comp_name, " (t-test)"), opt$log2FCcut, opt$adjPcut, id_col_t)
       if(!is.null(ma_plot_t)) {
-        plot_files <- save_plot_both(ma_plot_t, paste0(opt$output, "_ma_", safe_name, "_ttest"), width = 10, height = 8)
+        plot_files <- save_plot_both(ma_plot_t, paste0("step3_ma_", safe_name, "_ttest"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_ma_ttest")]] <- plot_files$png
         message(paste0("  MA plot (t-test) saved: ", basename(plot_files$png)))
       }
@@ -786,7 +786,7 @@ if(generate_plots) {
       # Wilcoxon volcano
       volc_plot_w <- create_volcano_plot(result_w, paste0(comp_name, " (Wilcoxon)"), opt$log2FCcut, opt$adjPcut, id_col_w)
       if(!is.null(volc_plot_w)) {
-        plot_files <- save_plot_both(volc_plot_w, paste0(opt$output, "_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
+        plot_files <- save_plot_both(volc_plot_w, paste0("step3_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_volcano_wilcox")]] <- plot_files$png
         message(paste0("  Volcano plot (Wilcoxon) saved: ", basename(plot_files$png)))
       }
@@ -794,7 +794,7 @@ if(generate_plots) {
       # Wilcoxon MA plot
       ma_plot_w <- create_ma_plot(result_w, paste0(comp_name, " (Wilcoxon)"), opt$log2FCcut, opt$adjPcut, id_col_w)
       if(!is.null(ma_plot_w)) {
-        plot_files <- save_plot_both(ma_plot_w, paste0(opt$output, "_ma_", safe_name, "_wilcox"), width = 10, height = 8)
+        plot_files <- save_plot_both(ma_plot_w, paste0("step3_ma_", safe_name, "_wilcox"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_ma_wilcox")]] <- plot_files$png
         message(paste0("  MA plot (Wilcoxon) saved: ", basename(plot_files$png)))
       }
@@ -815,7 +815,7 @@ if(generate_plots) {
       # Volcano plot
       volc_plot <- create_volcano_plot(result, comp_name, opt$log2FCcut, opt$adjPcut, id_col)
       if(!is.null(volc_plot)) {
-        plot_files <- save_plot_both(volc_plot, paste0(opt$output, "_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
+        plot_files <- save_plot_both(volc_plot, paste0("step3_volcano_", safe_name, "_wilcox"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_volcano")]] <- plot_files$png
         message(paste0("  Volcano plot saved: ", basename(plot_files$png)))
       }
@@ -823,7 +823,7 @@ if(generate_plots) {
       # MA plot
       ma_plot <- create_ma_plot(result, comp_name, opt$log2FCcut, opt$adjPcut, id_col)
       if(!is.null(ma_plot)) {
-        plot_files <- save_plot_both(ma_plot, paste0(opt$output, "_ma_", safe_name, "_wilcox"), width = 10, height = 8)
+        plot_files <- save_plot_both(ma_plot, paste0("step3_ma_", safe_name, "_wilcox"), width = 10, height = 8)
         plot_list[[paste0(comp_name, "_ma")]] <- plot_files$png
         message(paste0("  MA plot saved: ", basename(plot_files$png)))
       }
@@ -944,26 +944,26 @@ if(report_initialized) {
     for(i in seq_along(ttest_result_all)) {
       comp_name <- names(ttest_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s.pdf` | Volcano plot: %s |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s.png` | Volcano plot PNG: %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/step3_volcano_%s.pdf` | Volcano plot: %s |", safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/step3_volcano_%s.png` | Volcano plot PNG: %s |", safe_name, comp_name))
     }
   } else if(opt$do_ttest) {
     # Both t-test and wilcoxon results
     for(i in seq_along(ttest_result_all)) {
       comp_name <- names(ttest_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_ttest.pdf` | Volcano plot (t-test): %s |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_ttest.png` | Volcano plot PNG (t-test): %s |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot (Wilcoxon): %s |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot PNG (Wilcoxon): %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/step3_volcano_%s_ttest.pdf` | Volcano plot (t-test): %s |", safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/step3_volcano_%s_ttest.png` | Volcano plot PNG (t-test): %s |", safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/step3_volcano_%s_wilcox.pdf` | Volcano plot (Wilcoxon): %s |", safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/step3_volcano_%s_wilcox.png` | Volcano plot PNG (Wilcoxon): %s |", safe_name, comp_name))
     }
   } else {
     # Only wilcoxon results
     for(i in seq_along(wilcox_result_all)) {
       comp_name <- names(wilcox_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot PNG: %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/step3_volcano_%s_wilcox.pdf` | Volcano plot: %s |", safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/step3_volcano_%s_wilcox.png` | Volcano plot PNG: %s |", safe_name, comp_name))
     }
   }
   report_lines <- c(report_lines, "")
