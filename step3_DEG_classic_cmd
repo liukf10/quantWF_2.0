@@ -322,6 +322,47 @@ if(is.na(opt$do_ttest)) {
   opt$do_ttest = FALSE;
   message("large sample size. Setting do_ttest to FALSE.")}
 
+# Determine test method string for report
+test_method_str <- ""
+if(small_size) {
+  test_method_str <- "t-test"
+} else if(opt$do_ttest) {
+  test_method_str <- "t-test and Wilcoxon"
+} else {
+  test_method_str <- "Wilcoxon"
+}
+
+# Append Analysis Overview to report (now that small_size is defined)
+if(report_initialized && !report_append) {
+  # Analysis Overview section
+  cat("## Analysis Overview\n\n", file = report_file, append = TRUE)
+  cat("| Item | Value |\n", file = report_file, append = TRUE)
+  cat("|------|-------|\n", file = report_file, append = TRUE)
+  cat(sprintf("| Input File | %s |\n", ifelse(is.na(opt$input), "Using quant object", opt$input)), file = report_file, append = TRUE)
+  cat(sprintf("| Date | %s |\n", Sys.time()), file = report_file, append = TRUE)
+  cat(sprintf("| Output Prefix | %s |\n", opt$output), file = report_file, append = TRUE)
+  cat(sprintf("| Output Directory | %s |\n", opt$outputdir), file = report_file, append = TRUE)
+  cat(sprintf("| Test Method | %s |\n", test_method_str), file = report_file, append = TRUE)
+  cat(sprintf("| adjPcut | %s |\n", opt$adjPcut), file = report_file, append = TRUE)
+  cat(sprintf("| log2FCcut | %s |\n", opt$log2FCcut), file = report_file, append = TRUE)
+  cat(sprintf("| Group Variable | %s |\n", opt$grpname), file = report_file, append = TRUE)
+  cat("\n", file = report_file, append = TRUE)
+  
+  # Previous Step Report
+  cat("### Previous Step Report\n\n", file = report_file, append = TRUE)
+  if(!is.null(prev_report_file) && !is.null(prev_step)) {
+    cat(sprintf("[%s Report](%s)\n\n", tools::toTitleCase(prev_step), basename(prev_report_file)), file = report_file, append = TRUE)
+  } else {
+    cat("No previous step report found.\n\n", file = report_file, append = TRUE)
+  }
+  
+  # First Output Files section (only RData files)
+  cat("### Output Files\n\n", file = report_file, append = TRUE)
+  cat("| File | Description |\n", file = report_file, append = TRUE)
+  cat("|------|-------------|\n", file = report_file, append = TRUE)
+  cat(sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |\n", opt$output), file = report_file, append = TRUE)
+  cat(sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |\n\n", opt$output), file = report_file, append = TRUE)
+}
 
 ## t #####
 recordnum = NULL

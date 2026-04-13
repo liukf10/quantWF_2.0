@@ -228,54 +228,10 @@ report_file <- file.path(opt$outputdir, paste0(opt$output, "_step3_DEG_report.md
 # Check if report already exists (for additional runs)
 report_append <- file.exists(report_file)
 
-# Determine test method string
-test_method_str <- ""
-if(small_size) {
-  test_method_str <- if(opt$varequal) "t-test" else "t-test"
-} else if(opt$do_ttest) {
-  test_method_str <- "t-test and Wilcoxon"
-} else {
-  test_method_str <- "Wilcoxon"
-}
-
 if(!report_append) {
-  # Initialize new report with header
+  # Initialize new report with header only
   report_lines <- c()
   report_lines <- c(report_lines, "# Step 3: Differential Analysis Report")
-  report_lines <- c(report_lines, "")
-  
-  # Analysis Overview section (first section)
-  report_lines <- c(report_lines, "## Analysis Overview")
-  report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "| Item | Value |")
-  report_lines <- c(report_lines, "|------|-------|")
-  report_lines <- c(report_lines, sprintf("| Input File | %s |", ifelse(is.na(opt$input), "Using quant object", opt$input)))
-  report_lines <- c(report_lines, sprintf("| Date | %s |", Sys.time()))
-  report_lines <- c(report_lines, sprintf("| Output Prefix | %s |", opt$output))
-  report_lines <- c(report_lines, sprintf("| Output Directory | %s |", opt$outputdir))
-  report_lines <- c(report_lines, sprintf("| Test Method | %s |", test_method_str))
-  report_lines <- c(report_lines, sprintf("| adjPcut | %s |", opt$adjPcut))
-  report_lines <- c(report_lines, sprintf("| log2FCcut | %s |", opt$log2FCcut))
-  report_lines <- c(report_lines, sprintf("| Group Variable | %s |", opt$grpname))
-  report_lines <- c(report_lines, "")
-  
-  # Previous Step Report
-  report_lines <- c(report_lines, "### Previous Step Report")
-  report_lines <- c(report_lines, "")
-  if(!is.null(prev_report_file) && !is.null(prev_step)) {
-    report_lines <- c(report_lines, paste0("[", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")"))
-  } else {
-    report_lines <- c(report_lines, "No previous step report found.")
-  }
-  report_lines <- c(report_lines, "")
-  
-  # First Output Files section (only RData files)
-  report_lines <- c(report_lines, "### Output Files")
-  report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "| File | Description |")
-  report_lines <- c(report_lines, "|------|-------------|")
-  report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
-  report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
   report_lines <- c(report_lines, "")
   
   writeLines(report_lines, report_file)
@@ -368,6 +324,56 @@ if(is.na(opt$do_ttest)) {
   opt$do_ttest = FALSE;
   message("large sample size. Setting do_ttest to FALSE.")}
 
+# Determine test method string for report
+test_method_str <- ""
+if(small_size) {
+  test_method_str <- "t-test"
+} else if(opt$do_ttest) {
+  test_method_str <- "t-test and Wilcoxon"
+} else {
+  test_method_str <- "Wilcoxon"
+}
+
+# Append Analysis Overview to report (now that small_size is defined)
+if(report_initialized && !report_append) {
+  report_lines <- c()
+  
+  # Analysis Overview section
+  report_lines <- c(report_lines, "## Analysis Overview")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Item | Value |")
+  report_lines <- c(report_lines, "|------|-------|")
+  report_lines <- c(report_lines, sprintf("| Input File | %s |", ifelse(is.na(opt$input), "Using quant object", opt$input)))
+  report_lines <- c(report_lines, sprintf("| Date | %s |", Sys.time()))
+  report_lines <- c(report_lines, sprintf("| Output Prefix | %s |", opt$output))
+  report_lines <- c(report_lines, sprintf("| Output Directory | %s |", opt$outputdir))
+  report_lines <- c(report_lines, sprintf("| Test Method | %s |", test_method_str))
+  report_lines <- c(report_lines, sprintf("| adjPcut | %s |", opt$adjPcut))
+  report_lines <- c(report_lines, sprintf("| log2FCcut | %s |", opt$log2FCcut))
+  report_lines <- c(report_lines, sprintf("| Group Variable | %s |", opt$grpname))
+  report_lines <- c(report_lines, "")
+  
+  # Previous Step Report
+  report_lines <- c(report_lines, "### Previous Step Report")
+  report_lines <- c(report_lines, "")
+  if(!is.null(prev_report_file) && !is.null(prev_step)) {
+    report_lines <- c(report_lines, paste0("[", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")"))
+  } else {
+    report_lines <- c(report_lines, "No previous step report found.")
+  }
+  report_lines <- c(report_lines, "")
+  
+  # First Output Files section (only RData files)
+  report_lines <- c(report_lines, "### Output Files")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| File | Description |")
+  report_lines <- c(report_lines, "|------|-------------|")
+  report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
+  report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
+  report_lines <- c(report_lines, "")
+  
+  cat(paste(report_lines, collapse = "\n"), file = report_file, append = TRUE)
+}
 
 ## t #####
 recordnum = NULL
