@@ -174,32 +174,15 @@ if(!"loginfo" %in% ls()) loginfo = list();
 
 ### Initialize Report ####
 # V2.1 revised: Initialize Markdown report after loading data
-if(report_funcs_available && exists("check_existing_report")) {
-  # Check if input has report_file object (inherited from previous step)
-  loaded_report_file <- if("report_file" %in% otherobj) report_file else NULL
+# 硬编码报告文件名
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step3_report.md"))
+
+if(report_funcs_available) {
+  # 检查报告是否已存在（基于文件存在性）
+  report_append <- file.exists(report_file)
   
-  # Check for existing report with step3-specific naming
-  report_info <- check_existing_report(
-    outputdir = opt$outputdir, 
-    quantfile = opt$input, 
-    output = opt$output,
-    step_suffix = "step3",
-    loaded_report_file = loaded_report_file,
-    inherit_report = TRUE
-  )
-  
-  # Copy report from previous step if needed (different output name)
-  if (report_info$inherited) {
-    copy_report_if_needed(report_info)
-    report_append <- TRUE
-  } else {
-    report_append <- report_info$append
-  }
-  
-  report_file <- report_info$report_file
-  
-  # Initialize new report or append section to existing report
   if (!report_append) {
+    # 初始化新报告
     init_report(opt$outputdir, opt$output, "Step 3: Differential Expression Analysis", append = FALSE, step_suffix = "step3")
     
     # Write executed code
@@ -225,7 +208,7 @@ if(report_funcs_available && exists("check_existing_report")) {
       cat("**Previous Step:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")\n\n", file = report_file, append = TRUE)
     }
   } else {
-    # Same output, just add a new run section
+    # 追加到现有报告
     cat("\n---\n\n", file = report_file, append = TRUE)
     cat("## Step 3: Differential Expression Analysis (Additional Run)\n\n", file = report_file, append = TRUE)
     cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
@@ -655,12 +638,10 @@ if(report_initialized) {
   # Initialize report_lines vector (参考step2风格)
   report_lines <- c()
   
-  # Report header
+  # Report header (简化头部，移除Output信息)
   report_lines <- c(report_lines, "# Step 3: Differential Expression Analysis")
   report_lines <- c(report_lines, "")
   report_lines <- c(report_lines, paste0("**Analysis Date:** ", Sys.time()))
-  report_lines <- c(report_lines, paste0("**Output Prefix:** ", opt$output))
-  report_lines <- c(report_lines, paste0("**Output Directory:** ", opt$outputdir))
   report_lines <- c(report_lines, "")
   
   # Previous Step Report link (if found)
@@ -680,6 +661,15 @@ if(report_initialized) {
   report_lines <- c(report_lines, sprintf("| Sample count | %d |", ncol(quant)))
   report_lines <- c(report_lines, sprintf("| Feature count | %d |", nrow(quant)))
   report_lines <- c(report_lines, sprintf("| Group variable | %s |", opt$grpname))
+  report_lines <- c(report_lines, "")
+  
+  # Output Information section (新增)
+  report_lines <- c(report_lines, "## Output Information")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Item | Value |")
+  report_lines <- c(report_lines, "|------|-------|")
+  report_lines <- c(report_lines, sprintf("| Output Prefix | %s |", opt$output))
+  report_lines <- c(report_lines, sprintf("| Output Directory | %s |", opt$outputdir))
   report_lines <- c(report_lines, "")
   
   # Group Information section
@@ -804,17 +794,42 @@ if(report_initialized) {
   report_lines <- c(report_lines, sprintf("- **ID info column:** %s", opt$idinf_col))
   report_lines <- c(report_lines, "")
   
-  # Output Files section
+  # Output Files section - 使用实际文件名
   report_lines <- c(report_lines, "## Output Files")
   report_lines <- c(report_lines, "")
   report_lines <- c(report_lines, "| File | Description |")
   report_lines <- c(report_lines, "|------|-------------|")
   report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
   report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
-  report_lines <- c(report_lines, "| `plot/*_volcano_*.pdf` | Volcano plots (PDF) |")
-  report_lines <- c(report_lines, "| `plot/*_ma_*.pdf` | MA plots (PDF) |")
-  report_lines <- c(report_lines, "| `assets/*_volcano_*.png` | Volcano plots (PNG for report) |")
-  report_lines <- c(report_lines, "| `assets/*_ma_*.png` | MA plots (PNG for report) |")
+  
+  # 根据实际的比较名称生成文件名列表
+  if(small_size) {
+    # 只有 t-test 结果
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s.pdf` | Volcano plot: %s (t-test) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s.pdf` | MA plot: %s (t-test) |", opt$output, safe_name, comp_name))
+    }
+  } else if(opt$do_ttest) {
+    # t-test 和 wilcoxon 都有
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_ttest.pdf` | Volcano plot: %s (t-test) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_ttest.pdf` | MA plot: %s (t-test) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_wilcox.pdf` | MA plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
+    }
+  } else {
+    # 只有 wilcoxon 结果
+    for(i in seq_along(wilcox_result_all)) {
+      comp_name <- names(wilcox_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_wilcox.pdf` | MA plot: %s |", opt$output, safe_name, comp_name))
+    }
+  }
   report_lines <- c(report_lines, "")
   
   # Processing Log section
