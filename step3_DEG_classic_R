@@ -968,6 +968,55 @@ if(report_initialized) {
   }
   report_lines <- c(report_lines, "")
   
+  # Visualization Plots section - embed PNG images
+  report_lines <- c(report_lines, "### Visualization Plots")
+  report_lines <- c(report_lines, "")
+  
+  if(small_size) {
+    # Only t-test results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("**%s (t-test)**", comp_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("Volcano Plot:\n![Volcano](assets/step3_volcano_%s.png)", safe_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("MA Plot:\n![MA Plot](assets/step3_ma_%s.png)", safe_name))
+      report_lines <- c(report_lines, "")
+    }
+  } else if(opt$do_ttest) {
+    # Both t-test and wilcoxon results
+    for(i in seq_along(ttest_result_all)) {
+      comp_name <- names(ttest_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("**%s (t-test)**", comp_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("Volcano Plot:\n![Volcano](assets/step3_volcano_%s_ttest.png)", safe_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("MA Plot:\n![MA Plot](assets/step3_ma_%s_ttest.png)", safe_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("**%s (Wilcoxon)**", comp_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("Volcano Plot:\n![Volcano](assets/step3_volcano_%s_wilcox.png)", safe_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("MA Plot:\n![MA Plot](assets/step3_ma_%s_wilcox.png)", safe_name))
+      report_lines <- c(report_lines, "")
+    }
+  } else {
+    # Only wilcoxon results
+    for(i in seq_along(wilcox_result_all)) {
+      comp_name <- names(wilcox_result_all)[i]
+      safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
+      report_lines <- c(report_lines, sprintf("**%s (Wilcoxon)**", comp_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("Volcano Plot:\n![Volcano](assets/step3_volcano_%s_wilcox.png)", safe_name))
+      report_lines <- c(report_lines, "")
+      report_lines <- c(report_lines, sprintf("MA Plot:\n![MA Plot](assets/step3_ma_%s_wilcox.png)", safe_name))
+      report_lines <- c(report_lines, "")
+    }
+  }
+  report_lines <- c(report_lines, "")
+  
   # Completion marker
   report_lines <- c(report_lines, "---")
   report_lines <- c(report_lines, "")
