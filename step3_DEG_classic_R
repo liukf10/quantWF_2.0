@@ -223,32 +223,66 @@ if(!is.na(opt$input)) {
 if(!"loginfo" %in% ls()) loginfo = list();
 
 ### Initialize Markdown Report ####
-report_file <- file.path(opt$outputdir, paste0(opt$output, "_step3_report.md"))
+report_file <- file.path(opt$outputdir, paste0(opt$output, "_step3_DEG_report.md"))
 
 # Check if report already exists (for additional runs)
 report_append <- file.exists(report_file)
 
+# Determine test method string
+test_method_str <- ""
+if(small_size) {
+  test_method_str <- if(opt$varequal) "t-test" else "t-test"
+} else if(opt$do_ttest) {
+  test_method_str <- "t-test and Wilcoxon"
+} else {
+  test_method_str <- "Wilcoxon"
+}
+
 if(!report_append) {
   # Initialize new report with header
   report_lines <- c()
-  report_lines <- c(report_lines, "# Step 3: Differential Expression Analysis")
-  report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, paste0("**Analysis Date:** ", Sys.time()))
+  report_lines <- c(report_lines, "# Step 3: Differential Analysis Report")
   report_lines <- c(report_lines, "")
   
-  # Add previous step report link if found
+  # Analysis Overview section (first section)
+  report_lines <- c(report_lines, "## Analysis Overview")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| Item | Value |")
+  report_lines <- c(report_lines, "|------|-------|")
+  report_lines <- c(report_lines, sprintf("| Input File | %s |", ifelse(is.na(opt$input), "Using quant object", opt$input)))
+  report_lines <- c(report_lines, sprintf("| Date | %s |", Sys.time()))
+  report_lines <- c(report_lines, sprintf("| Output Prefix | %s |", opt$output))
+  report_lines <- c(report_lines, sprintf("| Output Directory | %s |", opt$outputdir))
+  report_lines <- c(report_lines, sprintf("| Test Method | %s |", test_method_str))
+  report_lines <- c(report_lines, sprintf("| adjPcut | %s |", opt$adjPcut))
+  report_lines <- c(report_lines, sprintf("| log2FCcut | %s |", opt$log2FCcut))
+  report_lines <- c(report_lines, sprintf("| Group Variable | %s |", opt$grpname))
+  report_lines <- c(report_lines, "")
+  
+  # Previous Step Report
+  report_lines <- c(report_lines, "### Previous Step Report")
+  report_lines <- c(report_lines, "")
   if(!is.null(prev_report_file) && !is.null(prev_step)) {
-    report_lines <- c(report_lines, "## Previous Step Report")
-    report_lines <- c(report_lines, "")
-    report_lines <- c(report_lines, paste0("**Linked Report:** [", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")"))
-    report_lines <- c(report_lines, "")
+    report_lines <- c(report_lines, paste0("[", tools::toTitleCase(prev_step), " Report](", basename(prev_report_file), ")"))
+  } else {
+    report_lines <- c(report_lines, "No previous step report found.")
   }
+  report_lines <- c(report_lines, "")
+  
+  # First Output Files section (only RData files)
+  report_lines <- c(report_lines, "### Output Files")
+  report_lines <- c(report_lines, "")
+  report_lines <- c(report_lines, "| File | Description |")
+  report_lines <- c(report_lines, "|------|-------------|")
+  report_lines <- c(report_lines, sprintf("| `%s_DEG_classic.RData` | Filtered DEG results |", opt$output))
+  report_lines <- c(report_lines, sprintf("| `%s_diffstat_classic.RData` | Complete statistical results |", opt$output))
+  report_lines <- c(report_lines, "")
   
   writeLines(report_lines, report_file)
 } else {
   # Append to existing report
   cat("\n---\n\n", file = report_file, append = TRUE)
-  cat("## Step 3: Differential Expression Analysis (Additional Run)\n\n", file = report_file, append = TRUE)
+  cat("## Step 3: Differential Analysis Report (Additional Run)\n\n", file = report_file, append = TRUE)
   cat("Generated: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n\n", file = report_file, append = TRUE)
 }
 
@@ -800,21 +834,23 @@ if(report_initialized) {
   # Input Information section
   report_lines <- c(report_lines, "## Input Information")
   report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "| Item | Value |")
-  report_lines <- c(report_lines, "|------|-------|")
-  report_lines <- c(report_lines, sprintf("| Input file | `%s` |", ifelse(is.na(opt$input), "Using quant object", opt$input)))
   report_lines <- c(report_lines, sprintf("| Sample count | %d |", ncol(quant)))
   report_lines <- c(report_lines, sprintf("| Feature count | %d |", nrow(quant)))
-  report_lines <- c(report_lines, sprintf("| Group variable | %s |", opt$grpname))
   report_lines <- c(report_lines, "")
   
-  # Output Information section
-  report_lines <- c(report_lines, "## Output Information")
+  # Parameters section
+  report_lines <- c(report_lines, "## Parameters")
   report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "| Item | Value |")
-  report_lines <- c(report_lines, "|------|-------|")
-  report_lines <- c(report_lines, sprintf("| Output Prefix | %s |", opt$output))
-  report_lines <- c(report_lines, sprintf("| Output Directory | %s |", opt$outputdir))
+  report_lines <- c(report_lines, sprintf("- **Input File:** %s", ifelse(is.na(opt$input), "Using quant object", opt$input)))
+  report_lines <- c(report_lines, sprintf("- **Output Prefix:** %s", opt$output))
+  report_lines <- c(report_lines, sprintf("- **Output Directory:** %s", opt$outputdir))
+  report_lines <- c(report_lines, sprintf("- **Log2 Fold Change cutoff:** %s", opt$log2FCcut))
+  report_lines <- c(report_lines, sprintf("- **Adjusted p-value cutoff:** %s", opt$adjPcut))
+  report_lines <- c(report_lines, sprintf("- **Group variable:** %s", opt$grpname))
+  report_lines <- c(report_lines, sprintf("- **Group A:** %s", paste(opt$groupA, collapse = ", ")))
+  report_lines <- c(report_lines, sprintf("- **Group B:** %s", paste(opt$groupB, collapse = ", ")))
+  report_lines <- c(report_lines, sprintf("- **Equal variance:** %s", opt$varequal))
+  report_lines <- c(report_lines, sprintf("- **ID info column:** %s", opt$idinf_col))
   report_lines <- c(report_lines, "")
   
   # Group Information section
@@ -836,8 +872,8 @@ if(report_initialized) {
   report_lines <- c(report_lines, "")
   report_lines <- c(report_lines, "### DEG Statistics")
   report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "| Comparison | Test | Total DEGs | Up-regulated | Down-regulated |")
-  report_lines <- c(report_lines, "|------------|------|------------|--------------|----------------|")
+  report_lines <- c(report_lines, "| Comparison | Test | Total DEGs | Up | Down |")
+  report_lines <- c(report_lines, "|------------|------|------------|-----|------|")
   
   if(small_size) {
     # Only t-test results
@@ -847,7 +883,7 @@ if(report_initialized) {
       up_count <- sum(result$log2FC > opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count <- sum(result$log2FC < -opt$log2FCcut & result$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count <- up_count + down_count
-      test_type <- if(opt$varequal) "Student t-test" else "Welch t-test"
+      test_type <- if(opt$varequal) "t-test" else "t-test"
       report_lines <- c(report_lines, sprintf("| %s | %s | %d | %d | %d |", comp_name, test_type, total_count, up_count, down_count))
     }
   } else if(opt$do_ttest) {
@@ -858,14 +894,14 @@ if(report_initialized) {
       up_count_t <- sum(result_t$log2FC > opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count_t <- sum(result_t$log2FC < -opt$log2FCcut & result_t$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count_t <- up_count_t + down_count_t
-      t_type <- if(opt$varequal) "Student t-test" else "Welch t-test"
-      report_lines <- c(report_lines, sprintf("| %s (t-test) | %s | %d | %d | %d |", comp_name, t_type, total_count_t, up_count_t, down_count_t))
+      t_type <- "t-test"
+      report_lines <- c(report_lines, sprintf("| %s | %s | %d | %d | %d |", comp_name, t_type, total_count_t, up_count_t, down_count_t))
       
       result_w <- wilcox_result_all[[i]]
       up_count_w <- sum(result_w$log2FC > opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
       down_count_w <- sum(result_w$log2FC < -opt$log2FCcut & result_w$p.adj < opt$adjPcut, na.rm = TRUE)
       total_count_w <- up_count_w + down_count_w
-      report_lines <- c(report_lines, sprintf("| %s (Wilcoxon) | Wilcoxon | %d | %d | %d |", comp_name, total_count_w, up_count_w, down_count_w))
+      report_lines <- c(report_lines, sprintf("| %s | Wilcoxon | %d | %d | %d |", comp_name, total_count_w, up_count_w, down_count_w))
     }
   } else {
     # Only wilcoxon results
@@ -880,67 +916,16 @@ if(report_initialized) {
   }
   report_lines <- c(report_lines, "")
   
-  # Visualization section
-  if(generate_plots && length(plot_list) > 0) {
-    report_lines <- c(report_lines, "### Visualization")
-    report_lines <- c(report_lines, "")
-    report_lines <- c(report_lines, "Generated plots (both PDF and PNG formats):")
-    report_lines <- c(report_lines, "")
-    
-    if(small_size) {
-      for(i in seq_along(ttest_result_all)) {
-        comp_name <- names(ttest_result_all)[i]
-        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        report_lines <- c(report_lines, sprintf("**%s (t-test)**", comp_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](assets/%s_volcano_%s.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](assets/%s_ma_%s.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-      }
-    } else if(opt$do_ttest) {
-      for(i in seq_along(ttest_result_all)) {
-        comp_name <- names(ttest_result_all)[i]
-        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        report_lines <- c(report_lines, sprintf("**%s**", comp_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot (t-test):\n  ![Volcano](assets/%s_volcano_%s_ttest.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot (t-test):\n  ![MA Plot](assets/%s_ma_%s_ttest.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot (Wilcoxon):\n  ![Volcano](assets/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot (Wilcoxon):\n  ![MA Plot](assets/%s_ma_%s_wilcox.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-      }
-    } else {
-      for(i in seq_along(wilcox_result_all)) {
-        comp_name <- names(wilcox_result_all)[i]
-        safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-        report_lines <- c(report_lines, sprintf("**%s (Wilcoxon)**", comp_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- Volcano Plot:\n  ![Volcano](assets/%s_volcano_%s_wilcox.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-        report_lines <- c(report_lines, sprintf("- MA Plot:\n  ![MA Plot](assets/%s_ma_%s_wilcox.png)", opt$output, safe_name))
-        report_lines <- c(report_lines, "")
-      }
-    }
-  }
-  
-  # Parameters Used section
-  report_lines <- c(report_lines, "## Parameters Used")
+  # Processing Log section
+  report_lines <- c(report_lines, "## Processing Log")
   report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, sprintf("- **Log2 Fold Change cutoff:** %s", opt$log2FCcut))
-  report_lines <- c(report_lines, sprintf("- **Adjusted p-value cutoff:** %s", opt$adjPcut))
-  report_lines <- c(report_lines, sprintf("- **Group variable:** %s", opt$grpname))
-  report_lines <- c(report_lines, sprintf("- **Group A:** %s", paste(opt$groupA, collapse = ", ")))
-  report_lines <- c(report_lines, sprintf("- **Group B:** %s", paste(opt$groupB, collapse = ", ")))
-  report_lines <- c(report_lines, sprintf("- **Equal variance:** %s", opt$varequal))
-  report_lines <- c(report_lines, sprintf("- **ID info column:** %s", opt$idinf_col))
+  report_lines <- c(report_lines, "```")
+  report_lines <- c(report_lines, loginfo1$record)
+  report_lines <- c(report_lines, "```")
   report_lines <- c(report_lines, "")
   
-  # Output Files section with actual filenames
-  report_lines <- c(report_lines, "## Output Files")
+  # Output Files and Visualization section (all output files including plots)
+  report_lines <- c(report_lines, "## Output Files and Visualization")
   report_lines <- c(report_lines, "")
   report_lines <- c(report_lines, "| File | Description |")
   report_lines <- c(report_lines, "|------|-------------|")
@@ -953,44 +938,28 @@ if(report_initialized) {
     for(i in seq_along(ttest_result_all)) {
       comp_name <- names(ttest_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s.pdf` | Volcano plot: %s (t-test) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s.png` | Volcano plot: %s (t-test, PNG) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s.pdf` | MA plot: %s (t-test) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_ma_%s.png` | MA plot: %s (t-test, PNG) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s.pdf` | Volcano plot: %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s.png` | Volcano plot PNG: %s |", opt$output, safe_name, comp_name))
     }
   } else if(opt$do_ttest) {
     # Both t-test and wilcoxon results
     for(i in seq_along(ttest_result_all)) {
       comp_name <- names(ttest_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_ttest.pdf` | Volcano plot: %s (t-test) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_ttest.png` | Volcano plot: %s (t-test, PNG) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_ttest.pdf` | MA plot: %s (t-test) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_ma_%s_ttest.png` | MA plot: %s (t-test, PNG) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot: %s (Wilcoxon, PNG) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_wilcox.pdf` | MA plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_ma_%s_wilcox.png` | MA plot: %s (Wilcoxon, PNG) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_ttest.pdf` | Volcano plot (t-test): %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_ttest.png` | Volcano plot PNG (t-test): %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot (Wilcoxon): %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot PNG (Wilcoxon): %s |", opt$output, safe_name, comp_name))
     }
   } else {
     # Only wilcoxon results
     for(i in seq_along(wilcox_result_all)) {
       comp_name <- names(wilcox_result_all)[i]
       safe_name <- gsub("[^a-zA-Z0-9]", "_", comp_name)
-      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot: %s (Wilcoxon, PNG) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `plot/%s_ma_%s_wilcox.pdf` | MA plot: %s (Wilcoxon) |", opt$output, safe_name, comp_name))
-      report_lines <- c(report_lines, sprintf("| `assets/%s_ma_%s_wilcox.png` | MA plot: %s (Wilcoxon, PNG) |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `plot/%s_volcano_%s_wilcox.pdf` | Volcano plot: %s |", opt$output, safe_name, comp_name))
+      report_lines <- c(report_lines, sprintf("| `assets/%s_volcano_%s_wilcox.png` | Volcano plot PNG: %s |", opt$output, safe_name, comp_name))
     }
   }
-  report_lines <- c(report_lines, "")
-  
-  # Processing Log section
-  report_lines <- c(report_lines, "## Processing Log")
-  report_lines <- c(report_lines, "")
-  report_lines <- c(report_lines, "```")
-  report_lines <- c(report_lines, loginfo1$record)
-  report_lines <- c(report_lines, "```")
   report_lines <- c(report_lines, "")
   
   # Completion marker
